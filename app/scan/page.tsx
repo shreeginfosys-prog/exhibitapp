@@ -52,7 +52,7 @@ export default function ScanPage() {
       const img = new Image()
       img.onload = () => {
         const canvas = document.createElement('canvas')
-        const maxSize = 1024
+        const maxSize = 1600
         let width = img.width
         let height = img.height
         if (width > height) {
@@ -64,7 +64,7 @@ export default function ScanPage() {
         canvas.height = height
         const ctx = canvas.getContext('2d')
         ctx?.drawImage(img, 0, 0, width, height)
-        const compressed = canvas.toDataURL('image/jpeg', 0.7)
+        const compressed = canvas.toDataURL('image/jpeg', 0.85)
         resolve(compressed.split(',')[1])
       }
       img.src = base64
