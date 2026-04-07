@@ -51,11 +51,12 @@ export default function ScanPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, side: 'front' | 'back') => {
     const file = e.target.files?.[0]
     if (!file) return
+    
     const reader = new FileReader()
     reader.onload = (event) => {
-      const base64 = event.target?.result as string
+      const result = event.target?.result as string
       if (side === 'front') {
-        setPreview(base64)
+        setPreview(result)
         setResult(null)
         setError(null)
         setSaved(false)
@@ -64,8 +65,11 @@ export default function ScanPage() {
         setPreview2(null)
         getUserType()
       } else {
-        setPreview2(base64)
+        setPreview2(result)
       }
+    }
+    reader.onerror = () => {
+      setError('Could not read image. Please try another photo.')
     }
     reader.readAsDataURL(file)
   }
@@ -75,17 +79,32 @@ export default function ScanPage() {
     setLoading(true)
     setError(null)
     try {
-      const base64Front = preview.split(',')[1]
-      if (!base64Front) {
-        setError('Image data is empty. Please try again.')
+      let base64Front = ''
+      if (preview.includes(',')) {
+        base64Front = preview.split(',')[1]
+      } else {
+        base64Front = preview
+      }
+
+      if (!base64Front || base64Front.length < 100) {
+        setError('Image too small or invalid. Please take a clearer photo.')
         setLoading(false)
         return
       }
+
       const response = await fetch('/api/scan-card', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: base64Front })
       })
+
+      if (!response.ok) {
+        const text = await response.text()
+        setError('Server error: ' + text.slice(0, 100))
+        setLoading(false)
+        return
+      }
+
       const data = await response.json()
       if (data.success) {
         setResult(data.data)
@@ -98,7 +117,6 @@ export default function ScanPage() {
       setLoading(false)
     }
   }
-
   const uploadImage = async (base64: string, userId: string): Promise<string> => {
     try {
       const blob = await fetch('data:image/jpeg;base64,' + base64).then(r => r.blob())
