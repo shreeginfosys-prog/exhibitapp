@@ -76,11 +76,15 @@ export default function ScanPage() {
     setError(null)
     try {
       const base64Front = preview.split(',')[1]
-      const base64Back = preview2 ? preview2.split(',')[1] : null
+      if (!base64Front) {
+        setError('Image data is empty. Please try again.')
+        setLoading(false)
+        return
+      }
       const response = await fetch('/api/scan-card', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Front, imageBack: base64Back })
+        body: JSON.stringify({ image: base64Front })
       })
       const data = await response.json()
       if (data.success) {
@@ -88,8 +92,8 @@ export default function ScanPage() {
       } else {
         setError(data.error || 'Something went wrong')
       }
-    } catch {
-      setError('Failed to scan. Please try again.')
+    } catch (e: any) {
+      setError('Error: ' + (e?.message || 'Unknown error'))
     } finally {
       setLoading(false)
     }
