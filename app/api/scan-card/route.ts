@@ -88,7 +88,14 @@ function parseBusinessCard(text: string) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { image } = await request.json()
+    console.log('API called - start')
+    const body = await request.json()
+    console.log('Body received, image length:', body.image?.length || 0)
+    const { image, imageBack } = body
+
+    if (!image) {
+      return NextResponse.json({ error: 'No image received' }, { status: 400 })
+    }
 
     // Google Vision extracts raw text
     const visionResponse = await fetch(

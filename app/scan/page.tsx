@@ -47,13 +47,37 @@ export default function ScanPage() {
     reader.readAsDataURL(file)
   }
 
+  const compressImage = (base64: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const maxSize = 1024
+        let width = img.width
+        let height = img.height
+        if (width > height) {
+          if (width > maxSize) { height = height * maxSize / width; width = maxSize }
+        } else {
+          if (height > maxSize) { width = width * maxSize / height; height = maxSize }
+        }
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        ctx?.drawImage(img, 0, 0, width, height)
+        const compressed = canvas.toDataURL('image/jpeg', 0.7)
+        resolve(compressed.split(',')[1])
+      }
+      img.src = base64
+    })
+  }
+
   const handleScan = async () => {
     if (!preview) return
     setLoading(true)
     setError(null)
     try {
-      const base64Front = preview.split(',')[1]
-      const base64Back = preview2 ? preview2.split(',')[1] : null
+      const base64Front = await compressImage(preview)
+      const base64Back = preview2 ? await compressImage(preview2) : null
       const response = await fetch('/api/scan-card', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
