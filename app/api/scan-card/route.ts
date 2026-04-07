@@ -2,61 +2,29 @@ import { NextRequest, NextResponse } from 'next/server'
 
 function parseBusinessCard(text: string) {
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+  let name = '', company = '', designation = '', phone = '', email = '', website = '', address = ''
 
-  let name = ''
-  let company = ''
-  let designation = ''
-  let phone = ''
-  let email = ''
-  let website = ''
-  let address = ''
-
-  // Extract email
   const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)
   if (emailMatch) email = emailMatch[0]
 
-  // Extract all phone numbers
   const phoneMatches = text.match(/(\+91[\s-]?)?[6-9]\d{9}/g)
   if (phoneMatches) phone = [...new Set(phoneMatches)].join(' / ')
 
-  // Extract website
   const websiteMatch = text.match(/(?:www\.|https?:\/\/)[^\s\n]+/)
   if (websiteMatch) website = websiteMatch[0]
 
-  // Extract address — line with pipe or pincode
-  const addressLine = lines.find(l => (l.includes('|') || /\d{6}/.test(l)) && !/^(\+91[\s-]?)?[6-9]\d{9}/.test(l.replace(/\s/g, '')))
+  const addressLine = lines.find(l => (l.includes('|') || /\d{6}/.test(l)) && !/^(\+91[\s-]?)?[6-9]\d{9}/.test(l.replace(/\s/g,'')))
   if (addressLine) address = addressLine
 
-  // Find name and company from remaining lines
-  const skipPatterns = [
-    /\d{7,}/,          // phone numbers
-    /@/,               // email
-    /www\./,           // website
-    /http/,            // url
-    /\|/,              // address with pipes
-    /\d{6}/,           // pincode
-  ]
-
-  const businessWords = [
-    'tech', 'pvt', 'ltd', 'limited', 'inc', 'corp', 'industries',
-    'enterprise', 'solutions', 'group', 'star', 'company', 'co.',
-    'trading', 'international', 'exports', 'imports', 'services',
-    'panel', 'power', 'energy', 'auto', 'phase'
-  ]
-
-  const designationWords = [
-    'manager', 'director', 'ceo', 'founder', 'owner', 'partner',
-    'executive', 'sales', 'engineer', 'consultant', 'head',
-    'officer', 'president', 'vice', 'senior', 'junior', 'md',
-    'proprietor', 'general'
-  ]
+  const businessWords = ['tech','pvt','ltd','limited','inc','corp','industries','enterprise','solutions','group','star','company','co.','trading','international','exports','imports','services','panel','power','energy','auto','phase','mfg','manufacturing','products','agency']
+  const designationWords = ['manager','director','ceo','founder','owner','partner','executive','sales','engineer','consultant','head','officer','president','vice','senior','junior','md','proprietor','general','representative','advisor']
 
   for (const line of lines) {
     const lower = line.toLowerCase()
-
-    // Skip lines with these patterns
-    if (skipPatterns.some(p => p.test(line))) continue
-    if (line === address) continue
+    if (/\d{7,}/.test(line)) continue
+    if (line.includes('@')) continue
+    if (line.includes('www.') || line.includes('http')) continue
+    if (line.includes('|') || /\d{6}/.test(line)) continue
 
     const hasBusinessWord = businessWords.some(w => lower.includes(w))
     const hasDesignationWord = designationWords.some(w => lower.includes(w))
@@ -64,26 +32,42 @@ function parseBusinessCard(text: string) {
     const isProperCase = /^[A-Z][a-z]/.test(line)
     const wordCount = line.split(' ').length
 
-    // Designation
-    if (hasDesignationWord && !designation) {
-      designation = line
-      continue
-    }
-
-    // Company — all caps or has business word
-    if ((hasBusinessWord || isAllCaps) && wordCount <= 6 && !company) {
-      company = line
-      continue
-    }
-
-    // Name — proper case, 2-4 words, not yet assigned
-    if (isProperCase && wordCount >= 1 && wordCount <= 4 && !name) {
-      name = line
-      continue
-    }
+    if (hasDesignationWord && !designation) { designation = line; continue }
+    if ((hasBusinessWord || isAllCaps) && wordCount <= 6 && !company) { company = line; continue }
+    if (isProperCase && wordCount >= 1 && wordCount <= 4 && !name) { name = line; continue }
   }
 
   return { name, company, designation, phone, email, website, address }
+}
+
+async function parseWithGemini(rawText: string) {
+  const geminiResponse = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `Extract contact information from this business card text. Return ONLY a raw JSON object with these exact fields: name, company, designation, phone, email, website, address. Use empty string for missing fields. No markdown, no code blocks, just raw JSON.
+
+Business card text:
+${rawText}`
+          }]
+        }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
+      })
+    }
+  )
+
+  const geminiData = await geminiResponse.json()
+  if (geminiData.error) return null
+
+  const geminiText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  const jsonMatch = geminiText.replace(/```json|```/g, '').trim().match(/\{[\s\S]*\}/)
+  if (!jsonMatch) return null
+
+  return JSON.parse(jsonMatch[0])
 }
 
 export async function POST(request: NextRequest) {
@@ -97,43 +81,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No image received' }, { status: 400 })
     }
 
-    // Google Vision extracts raw text
     const visionResponse = await fetch(
       `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          requests: [{
-            image: { content: image },
-            features: [{ type: 'TEXT_DETECTION', maxResults: 1 }]
-          }]
+          requests: [{ image: { content: image }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }]
         })
       }
     )
 
     const visionData = await visionResponse.json()
-    const rawText = visionData.responses?.[0]?.fullTextAnnotation?.text || ''
+    let rawText = visionData.responses?.[0]?.fullTextAnnotation?.text || ''
 
-    if (!rawText) {
-      return NextResponse.json({
-        error: 'No text found. Please try a clearer photo.'
-      }, { status: 400 })
+    if (imageBack) {
+      const visionResponse2 = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requests: [{ image: { content: imageBack }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }]
+          })
+        }
+      )
+      const visionData2 = await visionResponse2.json()
+      const backText = visionData2.responses?.[0]?.fullTextAnnotation?.text || ''
+      if (backText) rawText = rawText + '\n' + backText
     }
 
-    // Parse locally — completely free
-    const contactData = parseBusinessCard(rawText)
+    if (!rawText) {
+      return NextResponse.json({ error: 'No text found. Please try a clearer photo.' }, { status: 400 })
+    }
+
+    // Try Gemini first — better accuracy
+    let contactData = null
+    try {
+      contactData = await parseWithGemini(rawText)
+    } catch (e) {
+      console.log('Gemini failed, falling back to local parser')
+    }
+
+    // Fall back to local parser if Gemini fails
+    if (!contactData) {
+      contactData = parseBusinessCard(rawText)
+    }
 
     return NextResponse.json({
       success: true,
-      data: contactData,
-      rawText: rawText
+      data: { ...contactData, rawText },
+      rawText
     })
 
   } catch (error) {
     console.error('Scan error:', error)
-    return NextResponse.json({
-      error: `Failed to scan: ${error}`
-    }, { status: 500 })
+    return NextResponse.json({ error: `Failed to scan: ${error}` }, { status: 500 })
   }
 }
