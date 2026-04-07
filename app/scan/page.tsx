@@ -105,6 +105,59 @@ export default function ScanPage() {
         return
       }
 
+      const handleScan = async () => {
+    if (!preview) return
+    setLoading(true)
+    setError(null)
+    try {
+      const compressToBase64 = (dataUrl: string): Promise<string> => {
+        return new Promise((resolve) => {
+          const img = new Image()
+          img.onload = () => {
+            const canvas = document.createElement('canvas')
+            let width = img.width
+            let height = img.height
+            const maxSize = 800
+            if (width > height) {
+              if (width > maxSize) { height = Math.round(height * maxSize / width); width = maxSize }
+            } else {
+              if (height > maxSize) { width = Math.round(width * maxSize / height); height = maxSize }
+            }
+            canvas.width = width
+            canvas.height = height
+            const ctx = canvas.getContext('2d')
+            ctx?.drawImage(img, 0, 0, width, height)
+            const compressed = canvas.toDataURL('image/jpeg', 0.6)
+            resolve(compressed.split(',')[1])
+          }
+          img.onerror = () => resolve(preview.split(',')[1] || preview)
+          img.src = dataUrl
+        })
+      }
+
+      const base64Front = await compressToBase64(preview)
+
+      if (!base64Front || base64Front.length < 100) {
+        setError('Image too small or invalid. Please take a clearer photo.')
+        setLoading(false)
+        return
+      }
+
+      console.log('Sending image size:', base64Front.length)
+
+      const response = await fetch('/api/scan-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Front })
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        setError('Server error: ' + text.slice(0, 100))
+        setLoading(false)
+        return
+      }
+
       const data = await response.json()
       if (data.success) {
         setResult(data.data)
@@ -115,25 +168,6 @@ export default function ScanPage() {
       setError('Error: ' + (e?.message || 'Unknown error'))
     } finally {
       setLoading(false)
-    }
-  }
-  const uploadImage = async (base64: string, userId: string): Promise<string> => {
-    try {
-      const blob = await fetch('data:image/jpeg;base64,' + base64).then(r => r.blob())
-      const fileName = userId + '/' + Date.now() + '.jpg'
-      console.log('Uploading image, blob size:', blob.size, 'filename:', fileName)
-      const { data: uploadData, error } = await supabase.storage.from('cards').upload(fileName, blob, { contentType: 'image/jpeg' })
-      console.log('Upload result:', uploadData, 'Error:', error)
-      if (error) {
-        console.error('Upload error:', error.message)
-        return ''
-      }
-      const { data } = supabase.storage.from('cards').getPublicUrl(fileName)
-      console.log('Public URL:', data.publicUrl)
-      return data.publicUrl
-    } catch (e) {
-      console.error('Upload exception:', e)
-      return ''
     }
   }
 
