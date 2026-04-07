@@ -94,6 +94,9 @@ export async function POST(request: NextRequest) {
 
     const visionData = await visionResponse.json()
     let rawText = visionData.responses?.[0]?.fullTextAnnotation?.text || ''
+    console.log('Vision response:', JSON.stringify(visionData.responses?.[0], null, 2))
+    console.log('Raw text:', rawText)
+    console.log('Image length received:', image?.length)
 
     if (imageBack) {
       const visionResponse2 = await fetch(
