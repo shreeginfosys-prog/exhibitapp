@@ -139,7 +139,7 @@ export default function ScanPage() {
             </div>
           )}
         </div>
-        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={(e) => handleFileChange(e, 'front')} style={{ display: 'none' }} />
+        <input ref={fileInputRef} type="file" accept="image/*" onChange={(e) => handleFileChange(e, 'front')} style={{ display: 'none' }} />
       </div>
 
       {preview && (
@@ -152,7 +152,7 @@ export default function ScanPage() {
               <div style={{ fontSize: '13px', color: '#999' }}>+ Scan back of card (if it has more info)</div>
             )}
           </div>
-          <input ref={fileInputRef2} type="file" accept="image/*" capture="environment" onChange={(e) => handleFileChange(e, 'back')} style={{ display: 'none' }} />
+          <input ref={fileInputRef2} type="file" accept="image/*" onChange={(e) => handleFileChange(e, 'back')} style={{ display: 'none' }} />
         </div>
       )}
 
