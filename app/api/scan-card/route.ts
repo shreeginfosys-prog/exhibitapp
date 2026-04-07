@@ -1,141 +1,139 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-function parseBusinessCard(text: string) {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
-  let name = '', company = '', designation = '', phone = '', email = '', website = '', address = ''
-
-  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)
-  if (emailMatch) email = emailMatch[0]
-
-  const phoneMatches = text.match(/(\+91[\s-]?)?[6-9]\d{9}/g)
-  if (phoneMatches) phone = [...new Set(phoneMatches)].join(' / ')
-
-  const websiteMatch = text.match(/(?:www\.|https?:\/\/)[^\s\n]+/)
-  if (websiteMatch) website = websiteMatch[0]
-
-  const addressLine = lines.find(l => (l.includes('|') || /\d{6}/.test(l)) && !/^(\+91[\s-]?)?[6-9]\d{9}/.test(l.replace(/\s/g,'')))
-  if (addressLine) address = addressLine
-
-  const businessWords = ['tech','pvt','ltd','limited','inc','corp','industries','enterprise','solutions','group','star','company','co.','trading','international','exports','imports','services','panel','power','energy','auto','phase','mfg','manufacturing','products','agency']
-  const designationWords = ['manager','director','ceo','founder','owner','partner','executive','sales','engineer','consultant','head','officer','president','vice','senior','junior','md','proprietor','general','representative','advisor']
-
+function parseIndianCard(rawText: string) {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+  const lowerText = rawText.toLowerCase()
+  const businessWords = ['enterprises','enterprise','pvt','ltd','limited','industries','solutions','group','trading','international','exports','imports','services','flowers','plastics','chemicals','agency','associates','corporation','company','wholesale','wholesaler','manufacturer','supplier','dealer']
+  const industryMap: Record<string, string> = {
+    'flower': 'Flowers', 'floral': 'Flowers', 'plastic': 'Plastics', 'polymer': 'Plastics',
+    'textile': 'Textiles', 'fabric': 'Textiles', 'pharma': 'Pharma', 'medical': 'Healthcare',
+    'software': 'IT', 'tech': 'IT', 'hardware': 'Hardware', 'electronic': 'Electronics',
+    'chemical': 'Chemicals', 'food': 'Food', 'auto': 'Auto', 'construction': 'Construction',
+    'steel': 'Manufacturing', 'metal': 'Manufacturing', 'packaging': 'Packaging'
+  }
+  const emails = rawText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || []
+  const pincodeMatch = rawText.match(/\b[1-9][0-9]{5}\b/)
+  const pincode = pincodeMatch ? pincodeMatch[0] : ''
+  let city = '', state = ''
+  if (lowerText.includes('delhi')) { city = 'Delhi'; state = 'Delhi' }
+  else if (lowerText.includes('mumbai')) { city = 'Mumbai'; state = 'Maharashtra' }
+  else if (lowerText.includes('bangalore') || lowerText.includes('bengaluru')) { city = 'Bangalore'; state = 'Karnataka' }
+  else if (lowerText.includes('chennai')) { city = 'Chennai'; state = 'Tamil Nadu' }
+  else if (lowerText.includes('hyderabad')) { city = 'Hyderabad'; state = 'Telangana' }
+  else if (lowerText.includes('pune')) { city = 'Pune'; state = 'Maharashtra' }
+  else if (lowerText.includes('ahmedabad')) { city = 'Ahmedabad'; state = 'Gujarat' }
+  else if (lowerText.includes('surat')) { city = 'Surat'; state = 'Gujarat' }
+  else if (lowerText.includes('kolkata')) { city = 'Kolkata'; state = 'West Bengal' }
+  else if (lowerText.includes('jaipur')) { city = 'Jaipur'; state = 'Rajasthan' }
+  else if (lowerText.includes('noida')) { city = 'Noida'; state = 'Uttar Pradesh' }
+  else if (lowerText.includes('gurgaon') || lowerText.includes('gurugram')) { city = 'Gurgaon'; state = 'Haryana' }
+  else if (lowerText.includes('ludhiana')) { city = 'Ludhiana'; state = 'Punjab' }
+  else if (lowerText.includes('chandigarh')) { city = 'Chandigarh'; state = 'Punjab' }
+  let industry = ''
+  for (const [keyword, ind] of Object.entries(industryMap)) {
+    if (lowerText.includes(keyword)) { industry = ind; break }
+  }
+  let company = ''
   for (const line of lines) {
     const lower = line.toLowerCase()
-    if (/\d{7,}/.test(line)) continue
-    if (line.includes('@')) continue
-    if (line.includes('www.') || line.includes('http')) continue
-    if (line.includes('|') || /\d{6}/.test(line)) continue
-
+    const isAllCaps = line === line.toUpperCase() && line.length > 3 && !/\d{6,}/.test(line) && !/^\d/.test(line)
     const hasBusinessWord = businessWords.some(w => lower.includes(w))
-    const hasDesignationWord = designationWords.some(w => lower.includes(w))
-    const isAllCaps = line === line.toUpperCase() && line.length > 2
-    const isProperCase = /^[A-Z][a-z]/.test(line)
-    const wordCount = line.split(' ').length
-
-    if (hasDesignationWord && !designation) { designation = line; continue }
-    if ((hasBusinessWord || isAllCaps) && wordCount <= 6 && !company) { company = line; continue }
-    if (isProperCase && wordCount >= 1 && wordCount <= 4 && !name) { name = line; continue }
+    if ((isAllCaps || hasBusinessWord) && !company && line.length > 3 && !line.includes('@')) { company = line; break }
   }
-
-  return { name, company, designation, phone, email, website, address }
-}
-
-async function parseWithGemini(rawText: string) {
-  const geminiResponse = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `Extract contact information from this business card text. Return ONLY a raw JSON object with these exact fields: name, company, designation, phone, email, website, address. Use empty string for missing fields. No markdown, no code blocks, just raw JSON.
-
-Business card text:
-${rawText}`
-          }]
-        }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
-      })
+  let address = ''
+  for (const line of lines) {
+    const lower = line.toLowerCase()
+    if ((lower.includes('shop') || lower.includes('road') || lower.includes('opp') || lower.includes('near') || lower.includes('floor') || lower.includes('nagar') || lower.includes('market') || lower.includes('bazar') || lower.includes('chowk') || /\d{6}/.test(line)) && line.length > 10) { address = line; break }
+  }
+  let products = ''
+  for (const line of lines) {
+    const lower = line.toLowerCase()
+    if ((lower.includes('wholesale') || lower.includes('manufacturer') || lower.includes('dealer') || lower.includes('supplier') || lower.includes('etc') || lower.includes('item')) && !products && line !== company && line.length > 5) { products = line }
+  }
+  const people: any[] = []
+  const usedPhones = new Set<string>()
+  const sameLinePattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+){0,2})\s+([6-9]\d{9})(?:[,\s]+([6-9]\d{9}))?(?:[,\s]+([6-9]\d{9}))?/g
+  let match
+  while ((match = sameLinePattern.exec(rawText)) !== null) {
+    const name = match[1].trim()
+    const phones = [match[2], match[3], match[4]].filter(Boolean)
+    const isBusinessName = businessWords.some(w => name.toLowerCase().includes(w))
+    if (!isBusinessName && name.split(' ').length >= 2) {
+      phones.forEach(p => usedPhones.add(p))
+      if (!people.find(p => p.name === name)) {
+        people.push({ name, designation: '', phone1: phones[0]||'', phone2: phones[1]||'', phone3: phones[2]||'', email: '' })
+      }
     }
-  )
-
-  const geminiData = await geminiResponse.json()
-  if (geminiData.error) return null
-
-  const geminiText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || ''
-  const jsonMatch = geminiText.replace(/```json|```/g, '').trim().match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return null
-
-  return JSON.parse(jsonMatch[0])
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const isName = /^[A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3}$/.test(line) && !businessWords.some(w => line.toLowerCase().includes(w)) && line.split(' ').length >= 2 && !people.find(p => p.name === line)
+    if (isName) {
+      const personPhones: string[] = []
+      let j = i + 1
+      while (j < lines.length && j < i + 5) {
+        const phoneMatch = lines[j].match(/[6-9]\d{9}/g)
+        if (phoneMatch) { phoneMatch.forEach(p => { if (!usedPhones.has(p)) { personPhones.push(p); usedPhones.add(p) } }); j++ }
+        else break
+      }
+      if (personPhones.length > 0) {
+        people.push({ name: line, designation: '', phone1: personPhones[0]||'', phone2: personPhones[1]||'', phone3: personPhones[2]||'', email: emails[0]||'' })
+      }
+    }
+  }
+  if (people.length === 0) {
+    const allPhones = rawText.match(/(?:\+91[\s-]?)?[6-9]\d{9}/g) || []
+    const cleanPhones = [...new Set(allPhones.map(p => p.replace(/[\s\-\+91]/g, '').slice(-10)))]
+    if (cleanPhones.length > 0) {
+      people.push({ name: company || 'Contact', designation: '', phone1: cleanPhones[0]||'', phone2: cleanPhones[1]||'', phone3: cleanPhones[2]||'', email: emails[0]||'' })
+    }
+  }
+  return { company, industry, address, city, state, pincode, products, people }
 }
 
 export async function POST(request: NextRequest) {
   try {
     console.log('API called - start')
     const body = await request.json()
-    console.log('Body received, image length:', body.image?.length || 0)
     const { image, imageBack } = body
+    if (!image) return NextResponse.json({ error: 'No image received' }, { status: 400 })
 
-    if (!image) {
-      return NextResponse.json({ error: 'No image received' }, { status: 400 })
-    }
-
-    const visionResponse = await fetch(
+    const visionRes = await fetch(
       `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requests: [{ image: { content: image }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }]
-        })
+        body: JSON.stringify({ requests: [{ image: { content: image }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }] })
       }
     )
+    const visionData = await visionRes.json()
+    console.log('Vision full:', JSON.stringify(visionData).slice(0, 500))
 
-    const visionData = await visionResponse.json()
     let rawText = visionData.responses?.[0]?.fullTextAnnotation?.text || ''
-    console.log('Vision response:', JSON.stringify(visionData.responses?.[0], null, 2))
-    console.log('Raw text:', rawText)
-    console.log('Image length received:', image?.length)
 
     if (imageBack) {
-      const visionResponse2 = await fetch(
+      const visionRes2 = await fetch(
         `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            requests: [{ image: { content: imageBack }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }]
-          })
+          body: JSON.stringify({ requests: [{ image: { content: imageBack }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }] })
         }
       )
-      const visionData2 = await visionResponse2.json()
+      const visionData2 = await visionRes2.json()
       const backText = visionData2.responses?.[0]?.fullTextAnnotation?.text || ''
       if (backText) rawText = rawText + '\n' + backText
     }
 
-    if (!rawText) {
-      return NextResponse.json({ error: 'No text found. Please try a clearer photo.' }, { status: 400 })
-    }
+    console.log('Raw text length:', rawText.length)
+    console.log('Raw text:', rawText.slice(0, 200))
 
-    // Try Gemini first — better accuracy
-    let contactData = null
-    try {
-      contactData = await parseWithGemini(rawText)
-    } catch (e) {
-      console.log('Gemini failed, falling back to local parser')
-    }
+    if (!rawText) return NextResponse.json({ error: 'No text found. Please try a clearer photo.' }, { status: 400 })
 
-    // Fall back to local parser if Gemini fails
-    if (!contactData) {
-      contactData = parseBusinessCard(rawText)
-    }
+    const cardData = parseIndianCard(rawText)
+    console.log('Parsed:', JSON.stringify(cardData).slice(0, 300))
 
-    return NextResponse.json({
-      success: true,
-      data: { ...contactData, rawText },
-      rawText
-    })
+    return NextResponse.json({ success: true, data: { ...cardData, rawText }, rawText })
 
   } catch (error) {
     console.error('Scan error:', error)
