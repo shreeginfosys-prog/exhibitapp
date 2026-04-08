@@ -25,33 +25,9 @@ export default function ScanPage() {
     if (profile) setUserType(profile.type)
   }
 
-  const compressImage = (base64: string): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        const maxSize = 1600
-        let width = img.width
-        let height = img.height
-        if (width > height) {
-          if (width > maxSize) { height = height * maxSize / width; width = maxSize }
-        } else {
-          if (height > maxSize) { width = width * maxSize / height; height = maxSize }
-        }
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        ctx?.drawImage(img, 0, 0, width, height)
-        resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1])
-      }
-      img.src = base64
-    })
-  }
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, side: 'front' | 'back') => {
     const file = e.target.files?.[0]
     if (!file) return
-    
     const reader = new FileReader()
     reader.onload = (event) => {
       const result = event.target?.result as string
@@ -68,44 +44,10 @@ export default function ScanPage() {
         setPreview2(result)
       }
     }
-    reader.onerror = () => {
-      setError('Could not read image. Please try another photo.')
-    }
     reader.readAsDataURL(file)
   }
 
   const handleScan = async () => {
-    if (!preview) return
-    setLoading(true)
-    setError(null)
-    try {
-      let base64Front = ''
-      if (preview.includes(',')) {
-        base64Front = preview.split(',')[1]
-      } else {
-        base64Front = preview
-      }
-
-      if (!base64Front || base64Front.length < 100) {
-        setError('Image too small or invalid. Please take a clearer photo.')
-        setLoading(false)
-        return
-      }
-
-      const response = await fetch('/api/scan-card', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Front })
-      })
-
-      if (!response.ok) {
-        const text = await response.text()
-        setError('Server error: ' + text.slice(0, 100))
-        setLoading(false)
-        return
-      }
-
-      const handleScan = async () => {
     if (!preview) return
     setLoading(true)
     setError(null)
@@ -117,7 +59,7 @@ export default function ScanPage() {
             const canvas = document.createElement('canvas')
             let width = img.width
             let height = img.height
-            const maxSize = 800
+            const maxSize = 600
             if (width > height) {
               if (width > maxSize) { height = Math.round(height * maxSize / width); width = maxSize }
             } else {
@@ -127,40 +69,48 @@ export default function ScanPage() {
             canvas.height = height
             const ctx = canvas.getContext('2d')
             ctx?.drawImage(img, 0, 0, width, height)
-            const compressed = canvas.toDataURL('image/jpeg', 0.6)
-            resolve(compressed.split(',')[1])
+            resolve(canvas.toDataURL('image/jpeg', 0.5).split(',')[1])
           }
-          img.onerror = () => resolve(preview.split(',')[1] || preview)
+          img.onerror = () => resolve('')
           img.src = dataUrl
         })
       }
 
-      const base64Front = await compressToBase64(preview)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { setError('Not logged in'); setLoading(false); return }
 
-      if (!base64Front || base64Front.length < 100) {
-        setError('Image too small or invalid. Please take a clearer photo.')
+      const base64Front = await compressToBase64(preview)
+      if (!base64Front) { setError('Could not process image'); setLoading(false); return }
+
+      const uploadRes = await fetch('/api/upload-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Front, userId: user.id })
+      })
+
+      const uploadData = await uploadRes.json()
+      if (!uploadData.success) {
+        setError('Upload failed: ' + uploadData.error)
         setLoading(false)
         return
       }
 
-      console.log('Sending image size:', base64Front.length)
-
       const response = await fetch('/api/scan-card', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Front })
+        body: JSON.stringify({ imageUrl: uploadData.url })
       })
 
       if (!response.ok) {
         const text = await response.text()
-        setError('Server error: ' + text.slice(0, 100))
+        setError('Scan error: ' + text.slice(0, 100))
         setLoading(false)
         return
       }
 
       const data = await response.json()
       if (data.success) {
-        setResult(data.data)
+        setResult({ ...data.data, uploadedImageUrl: uploadData.url })
       } else {
         setError(data.error || 'Something went wrong')
       }
@@ -177,11 +127,7 @@ export default function ScanPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setSaving(false); return }
 
-    let image_url = ''
-    if (preview) {
-      const base64 = preview.split(',')[1]
-      image_url = await uploadImage(base64, user.id)
-    }
+    const image_url = result?.uploadedImageUrl || ''
 
     const { data: scan, error: scanError } = await supabase.from('scans').insert({
       scanner_id: user.id,
@@ -306,15 +252,11 @@ export default function ScanPage() {
           )}
 
           {result.address && (
-            <div style={{fontSize:'12px',color:'#999',marginTop:'2px'}}>
-              {result.address}
-            </div>
+            <div style={{fontSize:'12px',color:'#999',marginTop:'2px'}}>{result.address}</div>
           )}
 
           {result.products && (
-            <div style={{fontSize:'12px',color:'#666',marginTop:'4px',fontStyle:'italic'}}>
-              {result.products}
-            </div>
+            <div style={{fontSize:'12px',color:'#666',marginTop:'4px',fontStyle:'italic'}}>{result.products}</div>
           )}
 
           {result.people && result.people.length > 0 && (
@@ -324,22 +266,15 @@ export default function ScanPage() {
                 <div key={i} style={{padding:'10px',backgroundColor:'#fafafa',borderRadius:'8px',marginBottom:'8px'}}>
                   <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'4px'}}>
                     {person.name}
-                    {person.designation && (
-                      <span style={{fontSize:'12px',color:'#666',fontWeight:'400'}}> · {person.designation}</span>
-                    )}
+                    {person.designation && <span style={{fontSize:'12px',color:'#666',fontWeight:'400'}}> · {person.designation}</span>}
                   </div>
                   {[person.phone1, person.phone2, person.phone3].filter(Boolean).map((ph: string, j: number) => (
                     <div key={j} style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}}>
                       <span style={{fontSize:'13px',color:'#444'}}>{ph}</span>
                       <a href={'tel:'+ph} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'26px',height:'26px',borderRadius:'50%',backgroundColor:'#EAF3DE',textDecoration:'none',fontSize:'13px'}}>📞</a>
-                      {isExhibitor && (
-                        <a href={'https://wa.me/91'+ph+'?text=Hi'} target="_blank" rel="noreferrer" style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'26px',height:'26px',borderRadius:'50%',backgroundColor:'#E1F5EE',textDecoration:'none',fontSize:'13px'}}>💬</a>
-                      )}
                     </div>
                   ))}
-                  {person.email && (
-                    <div style={{fontSize:'12px',color:'#4285F4'}}>{person.email}</div>
-                  )}
+                  {person.email && <div style={{fontSize:'12px',color:'#4285F4'}}>{person.email}</div>}
                 </div>
               ))}
             </div>
@@ -366,7 +301,7 @@ export default function ScanPage() {
             </button>
           ) : (
             <div style={{marginTop:'16px',padding:'12px',backgroundColor:'#EAF3DE',borderRadius:'8px',color:'#27500A',fontSize:'14px',textAlign:'center'}}>
-              ✓ Saved — {result.people?.length || 0} contacts added
+              Saved — {result.people?.length || 0} contacts added
             </div>
           )}
 

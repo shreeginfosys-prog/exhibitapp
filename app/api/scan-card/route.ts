@@ -95,15 +95,20 @@ export async function POST(request: NextRequest) {
   try {
     console.log('API called - start')
     const body = await request.json()
-    const { image, imageBack } = body
-    if (!image) return NextResponse.json({ error: 'No image received' }, { status: 400 })
+    const { image, imageBack, imageUrl } = body
+
+    if (!image && !imageUrl) return NextResponse.json({ error: 'No image received' }, { status: 400 })
+
+    const imageRequest = imageUrl
+      ? { source: { imageUri: imageUrl } }
+      : { content: image }
 
     const visionRes = await fetch(
       `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requests: [{ image: { content: image }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }] })
+        body: JSON.stringify({ requests: [{ image: imageRequest, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }] })
       }
     )
     const visionData = await visionRes.json()
