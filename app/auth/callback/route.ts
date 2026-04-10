@@ -13,13 +13,9 @@ export async function GET(request: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          getAll() {
-            return cookieStore.getAll()
-          },
+          getAll() { return cookieStore.getAll() },
           setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
+            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
           },
         },
       }
@@ -33,12 +29,22 @@ export async function GET(request: Request) {
       if (user) {
         const { data: profile } = await supabase
           .from('users')
-          .select('type')
+          .select('type, onboarding_complete')
           .eq('id', user.id)
           .single()
 
-        if (!profile || !profile.type) {
-          return NextResponse.redirect(`${origin}/onboarding`)
+        if (!profile) {
+          await supabase.from('users').insert({
+            id: user.id,
+            email: user.email,
+            name: user.user_metadata?.full_name || '',
+            photo: user.user_metadata?.avatar_url || '',
+          })
+          return NextResponse.redirect(`${origin}/profile`)
+        }
+
+        if (!profile.onboarding_complete) {
+          return NextResponse.redirect(`${origin}/profile`)
         }
 
         return NextResponse.redirect(`${origin}/dashboard`)

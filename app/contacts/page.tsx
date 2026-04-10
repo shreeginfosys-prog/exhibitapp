@@ -6,247 +6,266 @@ import { createClient } from '../../lib/supabase'
 export default function ContactsPage() {
   const supabase = createClient()
   const [scans, setScans] = useState<any[]>([])
-  const [filtered, setFiltered] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [activeFilter, setActiveFilter] = useState('All')
-  const [userType, setUserType] = useState<string | null>(null)
+  const [modeFilter, setModeFilter] = useState('seller')
   const [template, setTemplate] = useState('Hi, great meeting you at the exhibition! Looking forward to staying in touch.')
   const [expandedScan, setExpandedScan] = useState<string | null>(null)
   const [viewingCard, setViewingCard] = useState<string | null>(null)
+  const [dealModal, setDealModal] = useState<string | null>(null)
+  const [dealValue, setDealValue] = useState('')
+  const primary = '#0F6E56'
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { window.location.href = '/login'; return }
+  useEffect(() => { fetchData() }, [])
 
-      const { data: profile } = await supabase.from('users').select('type, whatsapp_template').eq('id', user.id).single()
-      if (profile) {
-        setUserType(profile.type)
-        if (profile.whatsapp_template) setTemplate(profile.whatsapp_template)
-      }
+  const fetchData = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { window.location.href = '/login'; return }
+    const { data: profile } = await supabase.from('users').select('type, whatsapp_template').eq('id', user.id).single()
+    if (profile && profile.whatsapp_template) setTemplate(profile.whatsapp_template)
+    const { data } = await supabase
+      .from('scans')
+      .select('*, contacts(*), events(name)')
+      .eq('scanner_id', user.id)
+      .order('created_at', { ascending: false })
+    setScans(data || [])
+    setLoading(false)
+  }
 
-      const { data: scansData } = await supabase
-        .from('scans')
-        .select('*, contacts(*)')
-        .eq('scanner_id', user.id)
-        .order('created_at', { ascending: false })
+  const updateLeadStatus = async (scanId: string, status: string, value?: number) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data: profile } = await supabase.from('users').select('name').eq('id', user.id).single()
+    const userName = profile?.name || 'Unknown'
 
-      setScans(scansData || [])
-      setFiltered(scansData || [])
-      setLoading(false)
-    }
-    fetchData()
-  }, [])
+    const update: any = { lead_status: status }
+    if (value !== undefined) update.deal_value = value
+    await supabase.from('scans').update(update).eq('id', scanId)
 
-  const applyFilter = (tag: string) => {
-    setActiveFilter(tag)
-    setFiltered(tag === 'All' ? scans : scans.filter(s => s.tag === tag))
+    await supabase.from('lead_activity').insert({
+      scan_id: scanId,
+      user_id: user.id,
+      user_name: userName,
+      action: status === 'done' ? 'deal_done' : 'status_changed',
+      new_value: status === 'done' ? String(value || 0) : status
+    })
+
+    setScans(prev => prev.map(s => s.id === scanId ? { ...s, ...update } : s))
+    setDealModal(null)
+    setDealValue('')
   }
 
   const exportCSV = () => {
-    const headers = ['Company','Industry','City','State','Person Name','Designation','Phone1','Phone2','Email','Address','Tag','Note','Date']
+    const source = getFiltered()
+    const headers = ['Company','Industry','City','Mode','Event','Person','Phone','Email','Tag','Status','Note','Date']
     const rows: any[] = []
-    scans.forEach(scan => {
+    source.forEach(scan => {
       if (scan.contacts && scan.contacts.length > 0) {
         scan.contacts.forEach((c: any) => {
-          rows.push([
-            scan.company || '',
-            scan.industry || '',
-            scan.city || '',
-            scan.state || '',
-            c.name || '',
-            c.designation || '',
-            c.phone1 || '',
-            c.phone2 || '',
-            c.email || '',
-            scan.address || '',
-            scan.tag || '',
-            scan.note || '',
-            new Date(scan.created_at).toLocaleDateString('en-IN')
-          ])
+          rows.push([scan.company||'',scan.industry||'',scan.city||'',scan.mode||'seller',scan.events?.name||'',c.name||'',c.phone1||'',c.email||'',scan.tag||'',scan.lead_status||'new',scan.note||'',new Date(scan.created_at).toLocaleDateString('en-IN')])
         })
       }
     })
-    const csv = [headers, ...rows].map(r => r.map((v: any) => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
+    const csv = [headers,...rows].map(r=>r.map((v:any)=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')
+    const blob = new Blob([csv],{type:'text/csv'})
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'contacts.csv'
-    a.click()
+    const a = document.createElement('a'); a.href=url; a.download='contacts.csv'; a.click()
     URL.revokeObjectURL(url)
   }
 
-  const tagStyle = (tag: string) => {
-    const s: Record<string, { color: string; bg: string }> = {
-      'Hot': { color: '#D85A30', bg: '#FAECE7' },
-      'Warm': { color: '#BA7517', bg: '#FAEEDA' },
-      'Cold': { color: '#185FA5', bg: '#E6F1FB' },
-      'High': { color: '#27500A', bg: '#EAF3DE' },
-      'Medium': { color: '#BA7517', bg: '#FAEEDA' },
-      'Low': { color: '#5F5E5A', bg: '#F1EFE8' },
-    }
-    return s[tag] || { color: '#999', bg: '#f5f5f5' }
+  const getFiltered = () => {
+    let result = scans.filter(s => (s.mode || 'seller') === modeFilter)
+    if (activeFilter !== 'All') result = result.filter(s => s.tag === activeFilter)
+    return result
   }
 
-  const isExhibitor = userType === 'exhibitor'
-  const filterTags = isExhibitor ? ['All', 'Hot', 'Warm', 'Cold'] : ['All', 'High', 'Medium', 'Low']
-  const counts = filterTags.reduce((a, t) => {
-    a[t] = t === 'All' ? scans.length : scans.filter(s => s.tag === t).length
-    return a
-  }, {} as Record<string, number>)
+  const tagStyle = (tag: string) => {
+    const s: Record<string,{color:string;bg:string}> = {
+      'Hot':{color:'#D85A30',bg:'#FAECE7'},'Warm':{color:'#BA7517',bg:'#FAEEDA'},'Cold':{color:'#185FA5',bg:'#E6F1FB'},
+      'High':{color:'#27500A',bg:'#EAF3DE'},'Medium':{color:'#BA7517',bg:'#FAEEDA'},'Low':{color:'#5F5E5A',bg:'#F1EFE8'},
+    }
+    return s[tag] || {color:'#999',bg:'#f5f5f5'}
+  }
 
-  const totalContacts = scans.reduce((sum, s) => sum + (s.contacts?.length || 0), 0)
+  const statusConfig: Record<string,{label:string;color:string;bg:string}> = {
+    'new':{label:'New',color:'#888',bg:'#f0f0f0'},
+    'contacted':{label:'Contacted',color:'#185FA5',bg:'#E6F1FB'},
+    'interested':{label:'Interested',color:'#BA7517',bg:'#FAEEDA'},
+    'done':{label:'Deal Done ✓',color:'#27500A',bg:'#EAF3DE'},
+    'lost':{label:'Not Now',color:'#993C1D',bg:'#FAECE7'},
+  }
 
-  if (loading) return (
-    <div style={{ padding: '24px', textAlign: 'center', color: '#999', marginTop: '60px', fontFamily: 'sans-serif' }}>
-      Loading contacts...
-    </div>
-  )
+  const isSeller = modeFilter === 'seller'
+  const filterTags = isSeller ? ['All','Hot','Warm','Cold'] : ['All','High','Medium','Low']
+  const filtered = getFiltered()
+  const totalDeals = filtered.filter(s=>s.lead_status==='done').length
+
+  if (loading) return <div style={{padding:'24px',textAlign:'center',color:'#999',marginTop:'60px',fontFamily:'sans-serif'}}>Loading...</div>
 
   return (
-    <div style={{ padding: '24px', maxWidth: '600px', margin: '0 auto', fontFamily: 'sans-serif' }}>
+    <div style={{padding:'0',maxWidth:'600px',margin:'0 auto',fontFamily:'sans-serif',paddingBottom:'40px'}}>
 
       {viewingCard && (
-        <div onClick={() => setViewingCard(null)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <img src={viewingCard} alt="card" style={{ maxWidth: '100%', maxHeight: '90vh', borderRadius: '8px' }} />
+        <div onClick={()=>setViewingCard(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.85)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+          <img src={viewingCard} alt="card" style={{maxWidth:'100%',maxHeight:'90vh',borderRadius:'8px'}} />
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <div>
-          <h1 style={{ fontSize: '20px', fontWeight: '500', margin: 0 }}>My Contacts</h1>
-          <p style={{ color: '#999', fontSize: '13px', margin: '4px 0 0' }}>{scans.length} cards · {totalContacts} people</p>
-        </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={exportCSV} style={{ padding: '10px 14px', backgroundColor: '#f5f5f5', color: '#111', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
-            Export CSV
-          </button>
-          <a href="/scan" style={{ padding: '10px 18px', backgroundColor: '#111', color: 'white', borderRadius: '8px', fontSize: '13px', textDecoration: 'none' }}>
-            + Scan
-          </a>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
-        {filterTags.map(tag => {
-          const active = activeFilter === tag
-          const s = tag === 'All' ? { color: '#111', bg: '#f0f0f0' } : tagStyle(tag)
-          return (
-            <button key={tag} onClick={() => applyFilter(tag)} style={{ padding: '6px 14px', borderRadius: '20px', border: active ? '2px solid ' + s.color : '2px solid #eee', backgroundColor: active ? s.bg : 'white', color: active ? s.color : '#999', fontSize: '13px', fontWeight: '500', cursor: 'pointer' }}>
-              {tag} {counts[tag] > 0 ? '(' + counts[tag] + ')' : ''}
-            </button>
-          )
-        })}
-      </div>
-
-      {filtered.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📇</div>
-          <div style={{ fontSize: '16px', marginBottom: '8px', color: '#666' }}>No contacts yet</div>
-          <div style={{ fontSize: '14px' }}>Scan your first business card to get started</div>
-        </div>
-      )}
-
-      {filtered.map(scan => (
-        <div key={scan.id} style={{ backgroundColor: 'white', border: '1px solid #eee', borderRadius: '12px', marginBottom: '10px', overflow: 'hidden' }}>
-
-          <div style={{ padding: '16px', cursor: 'pointer' }} onClick={() => setExpandedScan(expandedScan === scan.id ? null : scan.id)}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-                  <div style={{ fontSize: '15px', fontWeight: '500', color: '#111' }}>
-                    {scan.company || 'Unknown Company'}
-                  </div>
-                  {scan.tag && (
-                    <span style={{ fontSize: '11px', fontWeight: '500', padding: '2px 8px', borderRadius: '10px', backgroundColor: tagStyle(scan.tag).bg, color: tagStyle(scan.tag).color }}>
-                      {scan.tag}
-                    </span>
-                  )}
-                  {scan.industry && (
-                    <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', backgroundColor: '#EAF3DE', color: '#27500A' }}>
-                      {scan.industry}
-                    </span>
-                  )}
-                </div>
-
-                {(scan.city || scan.state) && (
-                  <div style={{ fontSize: '12px', color: '#666' }}>
-                    📍 {[scan.city, scan.state].filter(Boolean).join(', ')}
-                    {scan.pincode ? ' - ' + scan.pincode : ''}
-                  </div>
-                )}
-
-                {scan.contacts && (
-                  <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>
-                    {scan.contacts.length} {scan.contacts.length === 1 ? 'person' : 'people'} · tap to {expandedScan === scan.id ? 'collapse' : 'expand'}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', marginLeft: '12px' }}>
-                {scan.image_url && (
-                  <img
-                    src={scan.image_url}
-                    alt="card"
-                    onClick={(e) => { e.stopPropagation(); setViewingCard(scan.image_url) }}
-                    style={{ width: '52px', height: '32px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #eee', cursor: 'zoom-in' }}
-                  />
-                )}
-                <div style={{ fontSize: '11px', color: '#bbb' }}>
-                  {new Date(scan.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                </div>
-              </div>
+      {dealModal && (
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+          <div style={{backgroundColor:'white',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'360px'}}>
+            <div style={{fontSize:'16px',fontWeight:'500',color:'#111',marginBottom:'8px'}}>Deal Done! 🎉</div>
+            <div style={{fontSize:'13px',color:'#666',marginBottom:'16px'}}>Enter the deal value (optional)</div>
+            <input value={dealValue} onChange={e=>setDealValue(e.target.value)} placeholder="Deal value in ₹ e.g. 50000" type="number" style={{width:'100%',padding:'10px 12px',borderRadius:'8px',border:'1px solid #ddd',fontSize:'14px',fontFamily:'sans-serif',boxSizing:'border-box',marginBottom:'12px'}} />
+            <div style={{display:'flex',gap:'8px'}}>
+              <button onClick={()=>updateLeadStatus(dealModal,'done',Number(dealValue)||0)} style={{flex:1,padding:'12px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}>Save Deal</button>
+              <button onClick={()=>{setDealModal(null);setDealValue('')}} style={{padding:'12px 16px',backgroundColor:'#f5f5f5',color:'#666',border:'none',borderRadius:'8px',fontSize:'14px',cursor:'pointer'}}>Skip</button>
             </div>
-
-            {scan.note && (
-              <div style={{ marginTop: '8px', padding: '8px 10px', backgroundColor: '#fafafa', borderRadius: '6px', fontSize: '12px', color: '#666', borderLeft: '2px solid #ddd' }}>
-                {scan.note}
-              </div>
-            )}
           </div>
+        </div>
+      )}
 
-          {expandedScan === scan.id && scan.contacts && scan.contacts.length > 0 && (
-            <div style={{ borderTop: '1px solid #f0f0f0', padding: '12px 16px' }}>
-              {scan.address && (
-                <div style={{ fontSize: '12px', color: '#999', marginBottom: '10px' }}>
-                  📍 {scan.address}
-                </div>
-              )}
-              {scan.products && (
-                <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px', fontStyle: 'italic' }}>
-                  {scan.products}
-                </div>
-              )}
-              {scan.contacts.map((contact: any) => (
-                <div key={contact.id} style={{ padding: '10px', backgroundColor: '#fafafa', borderRadius: '8px', marginBottom: '8px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: '500', color: '#111', marginBottom: '6px' }}>
-                    {contact.name}
-                    {contact.designation && (
-                      <span style={{ fontSize: '12px', color: '#666', fontWeight: '400' }}> · {contact.designation}</span>
-                    )}
+      <div style={{backgroundColor:primary,padding:'16px 20px 14px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}}>
+          <a href="/dashboard" style={{color:'rgba(255,255,255,0.7)',textDecoration:'none',fontSize:'13px'}}>← Dashboard</a>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button onClick={exportCSV} style={{padding:'6px 12px',backgroundColor:'rgba(255,255,255,0.15)',color:'white',border:'none',borderRadius:'6px',fontSize:'12px',cursor:'pointer'}}>Export CSV</button>
+            <a href="/scan" style={{padding:'6px 12px',backgroundColor:'white',color:primary,borderRadius:'6px',fontSize:'12px',textDecoration:'none',fontWeight:'500'}}>+ Scan</a>
+          </div>
+        </div>
+
+        <div style={{display:'flex',backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'20px',padding:'2px',marginBottom:'12px',width:'fit-content'}}>
+          {['seller','buyer'].map(m => (
+            <button key={m} onClick={()=>{setModeFilter(m);setActiveFilter('All')}} style={{padding:'5px 16px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:modeFilter===m?'white':'transparent',color:modeFilter===m?primary:'rgba(255,255,255,0.8)',textTransform:'capitalize'}}>
+              {m}
+            </button>
+          ))}
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+          <div style={{backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'8px',padding:'10px',textAlign:'center'}}>
+            <div style={{fontSize:'20px',fontWeight:'500',color:'white'}}>{filtered.length}</div>
+            <div style={{fontSize:'10px',color:'rgba(255,255,255,0.7)'}}>Cards Scanned</div>
+          </div>
+          <div style={{backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'8px',padding:'10px',textAlign:'center'}}>
+            <div style={{fontSize:'20px',fontWeight:'500',color:'white'}}>{totalDeals}</div>
+            <div style={{fontSize:'10px',color:'rgba(255,255,255,0.7)'}}>Deals Done</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{padding:'12px 16px 8px'}}>
+        <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+          {filterTags.map(tag => {
+            const active = activeFilter === tag
+            const s = tag==='All' ? {color:'#111',bg:'#f0f0f0'} : tagStyle(tag)
+            const count = tag==='All' ? scans.filter(s=>(s.mode||'seller')===modeFilter).length : scans.filter(s=>(s.mode||'seller')===modeFilter && s.tag===tag).length
+            return (
+              <button key={tag} onClick={()=>{setActiveFilter(tag)}} style={{padding:'5px 12px',borderRadius:'20px',border:active?'2px solid '+s.color:'2px solid #eee',backgroundColor:active?s.bg:'white',color:active?s.color:'#999',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
+                {tag} {count>0?'('+count+')':''}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div style={{padding:'8px 16px 24px'}}>
+        {filtered.length === 0 && (
+          <div style={{textAlign:'center',padding:'40px 20px',color:'#999'}}>
+            <div style={{fontSize:'36px',marginBottom:'10px'}}>��</div>
+            <div style={{fontSize:'14px',color:'#666'}}>No contacts in {modeFilter} mode</div>
+          </div>
+        )}
+
+        {filtered.map(scan => {
+          const status = scan.lead_status || 'new'
+          const statusInfo = statusConfig[status] || statusConfig['new']
+
+          return (
+            <div key={scan.id} style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',marginBottom:'10px'}}>
+
+              <div style={{padding:'14px 16px',cursor:'pointer'}} onClick={()=>setExpandedScan(expandedScan===scan.id?null:scan.id)}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'6px',marginBottom:'3px',flexWrap:'wrap'}}>
+                      <div style={{fontSize:'15px',fontWeight:'500',color:'#111'}}>{scan.company||'Unknown Company'}</div>
+                      {scan.tag && <span style={{fontSize:'10px',fontWeight:'500',padding:'1px 6px',borderRadius:'8px',backgroundColor:tagStyle(scan.tag).bg,color:tagStyle(scan.tag).color}}>{scan.tag}</span>}
+                      {scan.industry && <span style={{fontSize:'10px',padding:'1px 6px',borderRadius:'8px',backgroundColor:'#EAF3DE',color:'#27500A'}}>{scan.industry}</span>}
+                    </div>
+                    {scan.events?.name && <div style={{fontSize:'11px',color:primary,marginBottom:'2px'}}>🏪 {scan.events.name}</div>}
+                    {(scan.city||scan.state) && <div style={{fontSize:'12px',color:'#666'}}>📍 {[scan.city,scan.state].filter(Boolean).join(', ')}</div>}
+                    <div style={{fontSize:'11px',color:'#bbb',marginTop:'3px'}}>{new Date(scan.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</div>
                   </div>
-                  {[contact.phone1, contact.phone2, contact.phone3].filter(Boolean).map((ph: string, j: number) => (
-                    <div key={j} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '13px', color: '#444' }}>{ph}</span>
-                      <a href={'tel:' + ph} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#EAF3DE', textDecoration: 'none', fontSize: '14px' }} title="Call">📞</a>
-                      {isExhibitor && (
-                        <a href={'https://wa.me/91' + ph + '?text=' + encodeURIComponent(template)} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#E1F5EE', textDecoration: 'none', fontSize: '14px' }} title="WhatsApp">💬</a>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'6px',marginLeft:'10px',flexShrink:0}}>
+                    {scan.image_url && (
+                      <img src={scan.image_url} alt="card" onClick={(e)=>{e.stopPropagation();setViewingCard(scan.image_url)}} style={{width:'48px',height:'30px',objectFit:'cover',borderRadius:'4px',border:'1px solid #eee',cursor:'zoom-in'}} />
+                    )}
+                    <div style={{fontSize:'10px',color:'#ccc'}}>{scan.contacts?.length||0} people ▾</div>
+                  </div>
+                </div>
+              </div>
+
+              {isSeller && (
+                <div style={{padding:'0 16px 12px',borderTop:'1px solid #f9f9f9',display:'flex',alignItems:'center',gap:'8px'}}>
+                  <select
+                    value={status}
+                    onChange={(e)=>{
+                      const val = e.target.value
+                      if (val==='done') { setDealModal(scan.id) }
+                      else { updateLeadStatus(scan.id, val) }
+                    }}
+                    style={{padding:'4px 8px',borderRadius:'6px',border:'1px solid '+statusInfo.color,backgroundColor:statusInfo.bg,color:statusInfo.color,fontSize:'12px',fontWeight:'500',cursor:'pointer',outline:'none'}}
+                  >
+                    <option value="new">New</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="interested">Interested</option>
+                    <option value="done">Deal Done</option>
+                    <option value="lost">Not Now</option>
+                  </select>
+                  {status==='done' && scan.deal_value>0 && (
+                    <span style={{fontSize:'12px',color:'#27500A',fontWeight:'500'}}>₹{Number(scan.deal_value).toLocaleString('en-IN')}</span>
+                  )}
+                </div>
+              )}
+
+              {scan.note && (
+                <div style={{margin:'0 16px 12px',padding:'6px 10px',backgroundColor:'#fafafa',borderRadius:'6px',fontSize:'12px',color:'#666',borderLeft:'2px solid #ddd'}}>
+                  {scan.note}
+                </div>
+              )}
+
+              {expandedScan===scan.id && scan.contacts && scan.contacts.length>0 && (
+                <div style={{borderTop:'1px solid #f0f0f0',padding:'12px 16px'}}>
+                  {scan.address && <div style={{fontSize:'12px',color:'#999',marginBottom:'8px'}}>📍 {scan.address}</div>}
+                  {scan.contacts.map((contact:any)=>(
+                    <div key={contact.id} style={{padding:'10px',backgroundColor:'#fafafa',borderRadius:'8px',marginBottom:'8px'}}>
+                      <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'6px'}}>
+                        {contact.name}
+                        {contact.designation && <span style={{fontSize:'12px',color:'#666',fontWeight:'400'}}> · {contact.designation}</span>}
+                      </div>
+                      {[contact.phone1,contact.phone2,contact.phone3].filter(Boolean).map((ph:string,j:number)=>(
+                        <div key={j} style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}}>
+                          <span style={{fontSize:'13px',color:'#444'}}>{ph}</span>
+                          <a href={'tel:'+ph} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'28px',height:'28px',borderRadius:'50%',backgroundColor:'#EAF3DE',textDecoration:'none',fontSize:'14px'}}>📞</a>
+                          {isSeller && (
+                            <a href={'https://wa.me/91'+ph.replace(/\D/g,'')+'?text='+encodeURIComponent(template)} target="_blank" rel="noreferrer" style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'28px',height:'28px',borderRadius:'50%',backgroundColor:'#E1F5EE',textDecoration:'none',fontSize:'14px'}}>💬</a>
+                          )}
+                        </div>
+                      ))}
+                      {contact.email && (
+                        <div style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'4px'}}>
+                          <span style={{fontSize:'12px',color:'#444'}}>{contact.email}</span>
+                          <a href={'mailto:'+contact.email} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'28px',height:'28px',borderRadius:'50%',backgroundColor:'#E6F1FB',textDecoration:'none',fontSize:'14px'}}>✉️</a>
+                        </div>
                       )}
                     </div>
                   ))}
-                  {contact.email && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                      <span style={{ fontSize: '12px', color: '#444' }}>{contact.email}</span>
-                      <a href={'mailto:' + contact.email} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#E6F1FB', textDecoration: 'none', fontSize: '14px' }}>✉️</a>
-                    </div>
-                  )}
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
-      ))}
+          )
+        })}
+      </div>
     </div>
   )
 }

@@ -22,11 +22,11 @@ export default async function Dashboard() {
   if (!user) redirect('/login')
 
   const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single()
-  if (!profile || !profile.type) redirect('/onboarding')
+  if (!profile || !profile.onboarding_complete) redirect('/profile')
 
   const { data: scans } = await supabase
     .from('scans')
-    .select('id, tag, created_at, company, city, industry')
+    .select('id, tag, created_at, company, city, industry, mode')
     .eq('scanner_id', user.id)
     .order('created_at', { ascending: false })
 
@@ -34,6 +34,19 @@ export default async function Dashboard() {
     .from('contacts')
     .select('id')
     .eq('scanner_id', user.id)
+
+  const { data: events } = await supabase
+    .from('events')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('paid', true)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+
+  const now = new Date()
+  const activeEvent = events?.find(e =>
+    new Date(e.start_date) <= now && new Date(e.end_date) >= now
+  ) || events?.[0] || null
 
   const totalScans = scans?.length || 0
   const totalContacts = contacts?.length || 0
@@ -48,6 +61,7 @@ export default async function Dashboard() {
       totalContacts={totalContacts}
       hotLeads={hotLeads}
       recentScans={recentScans}
+      activeEvent={activeEvent}
     />
   )
 }
