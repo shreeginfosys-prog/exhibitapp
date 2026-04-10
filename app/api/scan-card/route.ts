@@ -1,147 +1,249 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-function parseIndianCard(rawText: string) {
-  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0)
-  const lowerText = rawText.toLowerCase()
-  const businessWords = ['enterprises','enterprise','pvt','ltd','limited','industries','solutions','group','trading','international','exports','imports','services','flowers','plastics','chemicals','agency','associates','corporation','company','wholesale','wholesaler','manufacturer','supplier','dealer']
-  const industryMap: Record<string, string> = {
-    'flower': 'Flowers', 'floral': 'Flowers', 'plastic': 'Plastics', 'polymer': 'Plastics',
-    'textile': 'Textiles', 'fabric': 'Textiles', 'pharma': 'Pharma', 'medical': 'Healthcare',
-    'software': 'IT', 'tech': 'IT', 'hardware': 'Hardware', 'electronic': 'Electronics',
-    'chemical': 'Chemicals', 'food': 'Food', 'auto': 'Auto', 'construction': 'Construction',
-    'steel': 'Manufacturing', 'metal': 'Manufacturing', 'packaging': 'Packaging'
+function parseIndianCard(text: string) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  
+  const indianCities = ['delhi','mumbai','kolkata','chennai','bangalore','bengaluru','hyderabad','pune','ahmedabad','surat','jaipur','lucknow','kanpur','nagpur','indore','bhopal','patna','ludhiana','agra','nashik','faridabad','meerut','rajkot','varanasi','srinagar','aurangabad','dhanbad','amritsar','navi mumbai','allahabad','ranchi','howrah','coimbatore','jabalpur','gwalior','vijayawada','jodhpur','madurai','raipur','kota','guwahati','chandigarh','solapur','hubli','tiruchirappalli','bareilly','moradabad','mysore','tiruppur','gurgaon','gurugram','noida','aligarh','jalandhar','bhubaneswar','salem','mira bhayandar','thiruvananthapuram','bhiwandi','saharanpur','gorakhpur','guntur','bikaner','amravati','warangal','surat','dehradun','hapur','noida','mathura','kolhapur','siliguri','rohtak','panipat','sadar bazar','karol bagh','lajpat nagar','connaught place','nehru place']
+  
+  const indianStates = ['delhi','maharashtra','karnataka','tamil nadu','telangana','uttar pradesh','gujarat','rajasthan','west bengal','madhya pradesh','bihar','punjab','haryana','odisha','kerala','jharkhand','assam','himachal pradesh','uttarakhand','chhattisgarh','goa','tripura','manipur','meghalaya','nagaland','arunachal pradesh','mizoram','sikkim','j&k','jammu','kashmir']
+
+  const industries = {
+    'plastic': ['plastic','polymer','pvc','hdpe','ldpe','pp','pet','nylon','resin','moulding','molding','injection','extrusion','packaging'],
+    'textile': ['textile','fabric','garment','cloth','yarn','thread','weaving','knitting','embroidery','saree','dupatta','cotton','silk','polyester'],
+    'hardware': ['hardware','tools','fastener','bolt','nut','screw','fitting','pipe','valve','pump'],
+    'electrical': ['electrical','electronic','wire','cable','switch','panel','motor','transformer','led','lighting'],
+    'food': ['food','beverage','snack','spice','masala','rice','flour','oil','dairy','bakery'],
+    'pharma': ['pharma','medicine','drug','chemical','lab','diagnostic','healthcare','medical'],
+    'furniture': ['furniture','wood','plywood','laminate','interior','decor','sofa','chair','table'],
+    'auto': ['auto','automobile','vehicle','car','bike','motorcycle','tractor','spare','parts'],
+    'handicraft': ['handicraft','craft','art','gift','souvenir','toy','doll','statue','idol','marble','brass','copper'],
+    'jewellery': ['jewellery','jewelry','gold','silver','diamond','gem','stone','bangle','ring','necklace'],
+    'paper': ['paper','print','printing','packaging','box','carton','corrugated','stationery'],
+    'machinery': ['machine','machinery','equipment','industrial','engineering','fabrication','welding'],
+    'real estate': ['real estate','property','builder','developer','construction','infra'],
+    'it': ['software','it','technology','tech','digital','computer','app','web'],
+    'export': ['export','import','trading','international','foreign','overseas'],
   }
-  const emails = rawText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || []
-  const pincodeMatch = rawText.match(/\b[1-9][0-9]{5}\b/)
-  const pincode = pincodeMatch ? pincodeMatch[0] : ''
-  let city = '', state = ''
-  if (lowerText.includes('delhi')) { city = 'Delhi'; state = 'Delhi' }
-  else if (lowerText.includes('mumbai')) { city = 'Mumbai'; state = 'Maharashtra' }
-  else if (lowerText.includes('bangalore') || lowerText.includes('bengaluru')) { city = 'Bangalore'; state = 'Karnataka' }
-  else if (lowerText.includes('chennai')) { city = 'Chennai'; state = 'Tamil Nadu' }
-  else if (lowerText.includes('hyderabad')) { city = 'Hyderabad'; state = 'Telangana' }
-  else if (lowerText.includes('pune')) { city = 'Pune'; state = 'Maharashtra' }
-  else if (lowerText.includes('ahmedabad')) { city = 'Ahmedabad'; state = 'Gujarat' }
-  else if (lowerText.includes('surat')) { city = 'Surat'; state = 'Gujarat' }
-  else if (lowerText.includes('kolkata')) { city = 'Kolkata'; state = 'West Bengal' }
-  else if (lowerText.includes('jaipur')) { city = 'Jaipur'; state = 'Rajasthan' }
-  else if (lowerText.includes('noida')) { city = 'Noida'; state = 'Uttar Pradesh' }
-  else if (lowerText.includes('gurgaon') || lowerText.includes('gurugram')) { city = 'Gurgaon'; state = 'Haryana' }
-  else if (lowerText.includes('ludhiana')) { city = 'Ludhiana'; state = 'Punjab' }
-  else if (lowerText.includes('chandigarh')) { city = 'Chandigarh'; state = 'Punjab' }
-  let industry = ''
-  for (const [keyword, ind] of Object.entries(industryMap)) {
-    if (lowerText.includes(keyword)) { industry = ind; break }
-  }
+
+  // Extract company — usually first or second line, often has Pvt Ltd, Inc, etc
   let company = ''
-  for (const line of lines) {
-    const lower = line.toLowerCase()
-    const isAllCaps = line === line.toUpperCase() && line.length > 3 && !/\d{6,}/.test(line) && !/^\d/.test(line)
-    const hasBusinessWord = businessWords.some(w => lower.includes(w))
-    if ((isAllCaps || hasBusinessWord) && !company && line.length > 3 && !line.includes('@')) { company = line; break }
-  }
-  let address = ''
-  for (const line of lines) {
-    const lower = line.toLowerCase()
-    if ((lower.includes('shop') || lower.includes('road') || lower.includes('opp') || lower.includes('near') || lower.includes('floor') || lower.includes('nagar') || lower.includes('market') || lower.includes('bazar') || lower.includes('chowk') || /\d{6}/.test(line)) && line.length > 10) { address = line; break }
-  }
-  let products = ''
-  for (const line of lines) {
-    const lower = line.toLowerCase()
-    if ((lower.includes('wholesale') || lower.includes('manufacturer') || lower.includes('dealer') || lower.includes('supplier') || lower.includes('etc') || lower.includes('item')) && !products && line !== company && line.length > 5) { products = line }
-  }
-  const people: any[] = []
-  const usedPhones = new Set<string>()
-  const sameLinePattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+){0,2})\s+([6-9]\d{9})(?:[,\s]+([6-9]\d{9}))?(?:[,\s]+([6-9]\d{9}))?/g
-  let match
-  while ((match = sameLinePattern.exec(rawText)) !== null) {
-    const name = match[1].trim()
-    const phones = [match[2], match[3], match[4]].filter(Boolean)
-    const isBusinessName = businessWords.some(w => name.toLowerCase().includes(w))
-    if (!isBusinessName && name.split(' ').length >= 2) {
-      phones.forEach(p => usedPhones.add(p))
-      if (!people.find(p => p.name === name)) {
-        people.push({ name, designation: '', phone1: phones[0]||'', phone2: phones[1]||'', phone3: phones[2]||'', email: '' })
-      }
+  const companyPatterns = [/pvt\.?\s*ltd/i, /private\s+limited/i, /ltd\.?/i, /limited/i, /inc\.?/i, /llp/i, /& co/i, /industries/i, /enterprise/i, /trading/i, /manufacturer/i, /exports/i, /international/i]
+  
+  for (const line of lines.slice(0, 5)) {
+    if (companyPatterns.some(p => p.test(line)) && line.length > 3) {
+      company = line; break
     }
   }
+  if (!company && lines.length > 0) company = lines[0]
+
+  // Extract phone numbers
+  const phoneRegex = /(?:\+91[-.\s]?)?(?:\(?0?[6-9]\d{9}\)?|(?:\d{2,5}[-.\s]?\d{6,8}))/g
+  const phones = [...new Set((text.match(phoneRegex) || []).map(p => p.replace(/[\s\-().]/g, '').replace(/^\+91/, '').replace(/^0/, '')))]
+    .filter(p => p.length >= 10 && p.length <= 12)
+    .slice(0, 5)
+
+  // Extract emails
+  const emailRegex = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g
+  const emails = (text.match(emailRegex) || []).slice(0, 3)
+
+  // Extract website
+  const webRegex = /(?:www\.)?[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?(?:\/\S*)?/gi
+  const websites = (text.match(webRegex) || []).filter(w => !w.includes('@') && w.includes('.')).slice(0, 1)
+
+  // Extract pincode
+  const pincodeMatch = text.match(/\b[1-9][0-9]{5}\b/)
+  const pincode = pincodeMatch ? pincodeMatch[0] : ''
+
+  // Detect city and state
+  let city = '', state = ''
+  const lowerText = text.toLowerCase()
+  for (const c of indianCities) {
+    if (lowerText.includes(c)) { city = c.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join(' '); break }
+  }
+  for (const s of indianStates) {
+    if (lowerText.includes(s)) { state = s.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join(' '); break }
+  }
+
+  // Detect industry
+  let industry = ''
+  for (const [ind, keywords] of Object.entries(industries)) {
+    if (keywords.some(k => lowerText.includes(k))) {
+      industry = ind.charAt(0).toUpperCase() + ind.slice(1); break
+    }
+  }
+
+  // Extract people (name + designation)
+  const designations = ['director','md','ceo','coo','cfo','manager','officer','executive','proprietor','owner','partner','chairman','president','head','chief','sales','purchase','marketing','gm','agm','dgm','engineer','consultant','founder','co-founder']
+  
+  const people: any[] = []
+  const usedLines = new Set<number>()
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    const isName = /^[A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3}$/.test(line) && !businessWords.some(w => line.toLowerCase().includes(w)) && line.split(' ').length >= 2 && !people.find(p => p.name === line)
-    if (isName) {
-      const personPhones: string[] = []
-      let j = i + 1
-      while (j < lines.length && j < i + 5) {
-        const phoneMatch = lines[j].match(/[6-9]\d{9}/g)
-        if (phoneMatch) { phoneMatch.forEach(p => { if (!usedPhones.has(p)) { personPhones.push(p); usedPhones.add(p) } }); j++ }
-        else break
+    const lline = line.toLowerCase()
+    
+    // Skip lines that are clearly not names
+    if (phones.some(p => line.includes(p))) continue
+    if (emails.some(e => line.includes(e))) continue
+    if (companyPatterns.some(p => p.test(line))) continue
+    if (/\d{4,}/.test(line)) continue
+    if (line.length > 50) continue
+    if (websites.some(w => line.includes(w))) continue
+    if (indianCities.some(c => lline === c)) continue
+
+    const hasDesignation = designations.some(d => lline.includes(d))
+    
+    // Check if looks like a name (2-4 words, capitalized)
+    const words = line.split(/\s+/)
+    const looksLikeName = words.length >= 2 && words.length <= 4 && 
+      words.every(w => w.length > 1 && /^[A-Z]/.test(w)) &&
+      !lline.includes('@') && !lline.includes('www')
+
+    if (looksLikeName || hasDesignation) {
+      // Try to find associated designation on next line
+      let designation = ''
+      let name = line
+
+      if (hasDesignation && !looksLikeName) {
+        designation = line
+        // Look for name on previous line
+        if (i > 0 && !usedLines.has(i-1)) {
+          const prevLine = lines[i-1]
+          const prevWords = prevLine.split(/\s+/)
+          if (prevWords.length >= 1 && prevWords.length <= 4 && /^[A-Z]/.test(prevWords[0])) {
+            name = prevLine
+            usedLines.add(i-1)
+          } else {
+            name = ''
+          }
+        } else {
+          name = ''
+        }
+      } else if (looksLikeName) {
+        // Look for designation on next line
+        if (i+1 < lines.length && !usedLines.has(i+1)) {
+          const nextLine = lines[i+1]
+          if (designations.some(d => nextLine.toLowerCase().includes(d))) {
+            designation = nextLine
+            usedLines.add(i+1)
+          }
+        }
       }
-      if (personPhones.length > 0) {
-        people.push({ name: line, designation: '', phone1: personPhones[0]||'', phone2: personPhones[1]||'', phone3: personPhones[2]||'', email: emails[0]||'' })
+
+      if (name || designation) {
+        // Find phone for this person
+        const personPhone = phones[people.length] || ''
+        const personEmail = emails[people.length] || ''
+        
+        if (name || designation) {
+          people.push({
+            name: name || '',
+            designation: designation || '',
+            phone1: personPhone,
+            phone2: people.length === 0 && phones[1] ? phones[1] : '',
+            phone3: people.length === 0 && phones[2] ? phones[2] : '',
+            email: personEmail
+          })
+          usedLines.add(i)
+        }
       }
     }
   }
-  if (people.length === 0) {
-    const allPhones = rawText.match(/(?:\+91[\s-]?)?[6-9]\d{9}/g) || []
-    const cleanPhones = [...new Set(allPhones.map(p => p.replace(/[\s\-\+91]/g, '').slice(-10)))]
-    if (cleanPhones.length > 0) {
-      people.push({ name: company || 'Contact', designation: '', phone1: cleanPhones[0]||'', phone2: cleanPhones[1]||'', phone3: cleanPhones[2]||'', email: emails[0]||'' })
+
+  // If no people found but phones exist — create generic entry
+  if (people.length === 0 && phones.length > 0) {
+    people.push({
+      name: '',
+      designation: '',
+      phone1: phones[0] || '',
+      phone2: phones[1] || '',
+      phone3: phones[2] || '',
+      email: emails[0] || ''
+    })
+  }
+
+  // Extract address
+  const addressLines: string[] = []
+  for (const line of lines) {
+    if (line.length > 10 && line.length < 100) {
+      const isPhone = phones.some(p => line.includes(p))
+      const isEmail = emails.some(e => line.includes(e))
+      const isCompany = line === company
+      const isPerson = people.some(p => p.name === line || p.designation === line)
+      const hasAddressKeyword = /plot|shop|flat|floor|road|street|nagar|colony|sector|phase|industrial|area|market|bazaar|gali|marg|chowk|near|opp|behind|above|beside/i.test(line)
+      
+      if (!isPhone && !isEmail && !isCompany && !isPerson && hasAddressKeyword) {
+        addressLines.push(line)
+      }
     }
   }
-  return { company, industry, address, city, state, pincode, products, people }
+
+  // Extract products/services
+  const productKeywords = /product|service|manufactur|deal|special|offer|supply|export|import/i
+  let products = ''
+  for (const line of lines) {
+    if (productKeywords.test(line) && line.length < 100) {
+      products = line; break
+    }
+  }
+
+  return {
+    company: company.trim(),
+    industry,
+    city,
+    state,
+    pincode,
+    address: addressLines.slice(0, 2).join(', '),
+    products,
+    website: websites[0] || '',
+    people,
+    rawText: text
+  }
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    console.log('API called - start')
-    const body = await request.json()
-    const { image, imageBack, imageUrl } = body
+    const body = await req.json()
+    const { imageUrl } = body
 
-    if (!image && !imageUrl) return NextResponse.json({ error: 'No image received' }, { status: 400 })
+    if (!imageUrl) {
+      return NextResponse.json({ success: false, error: 'No image URL provided' })
+    }
 
-    const imageRequest = imageUrl
-      ? { source: { imageUri: imageUrl } }
-      : { content: image }
+    const apiKey = process.env.GOOGLE_VISION_API_KEY
+    if (!apiKey) {
+      return NextResponse.json({ success: false, error: 'Vision API key not configured' })
+    }
 
+    // Call Google Vision API
     const visionRes = await fetch(
-      `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
+      `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requests: [{ image: imageRequest, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }] })
+        body: JSON.stringify({
+          requests: [{
+            image: { source: { imageUri: imageUrl } },
+            features: [{ type: 'TEXT_DETECTION', maxResults: 1 }]
+          }]
+        })
       }
     )
+
     const visionData = await visionRes.json()
-    console.log('Vision full:', JSON.stringify(visionData).slice(0, 500))
+    const rawText = visionData?.responses?.[0]?.fullTextAnnotation?.text || 
+                    visionData?.responses?.[0]?.textAnnotations?.[0]?.description || ''
 
-    let rawText = visionData.responses?.[0]?.fullTextAnnotation?.text || ''
-
-    if (imageBack) {
-      const visionRes2 = await fetch(
-        `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requests: [{ image: { content: imageBack }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }] })
-        }
-      )
-      const visionData2 = await visionRes2.json()
-      const backText = visionData2.responses?.[0]?.fullTextAnnotation?.text || ''
-      if (backText) rawText = rawText + '\n' + backText
+    if (!rawText) {
+      return NextResponse.json({ success: false, error: 'No text found on card. Please try a clearer photo.' })
     }
 
-    console.log('Raw text length:', rawText.length)
-    console.log('Raw text:', rawText.slice(0, 200))
+    const parsed = parseIndianCard(rawText)
 
-    if (!rawText) return NextResponse.json({ error: 'No text found. Please try a clearer photo.' }, { status: 400 })
+    return NextResponse.json({ success: true, data: { ...parsed, rawText } })
 
-    const cardData = parseIndianCard(rawText)
-    console.log('Parsed:', JSON.stringify(cardData).slice(0, 300))
-
-    return NextResponse.json({ success: true, data: { ...cardData, rawText }, rawText })
-
-  } catch (error) {
-    console.error('Scan error:', error)
-    return NextResponse.json({ error: `Failed to scan: ${error}` }, { status: 500 })
+  } catch (e: any) {
+    console.error('Scan card error:', e)
+    return NextResponse.json({ success: false, error: e?.message || 'Unknown error' })
   }
 }

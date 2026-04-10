@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '../../../lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
+import VoiceFollowUp from '../../components/VoiceFollowUp'
+import MicButton from '../../components/MicButton'
 
 export default function EventDetailPage() {
   const supabase = createClient()
@@ -223,18 +225,17 @@ export default function EventDetailPage() {
               </div>
             )}
 
-            <div style={{marginBottom:'20px'}}>
-              <div style={{display:'flex',alignItems:'center',gap:'6px',marginBottom:'8px'}}>
-                <div style={{fontSize:'12px',fontWeight:'500',color:'#666',textTransform:'uppercase',letterSpacing:'0.05em'}}>Follow-up Note</div>
-                <span style={{fontSize:'10px',padding:'1px 6px',borderRadius:'4px',backgroundColor:'#FAECE7',color:'#D85A30',fontWeight:'500'}}>Required</span>
-              </div>
+            </div>
+            <div style={{display:'flex',gap:'8px',alignItems:'flex-start'}}>
               <textarea
                 value={editNote}
                 onChange={e=>setEditNote(e.target.value)}
                 placeholder="What happened? What was discussed? What is the next step?..."
-                style={{width:'100%',padding:'10px',borderRadius:'8px',border:editNote.trim()?'1px solid '+primary:'1px solid #ffcccc',fontSize:'13px',resize:'none',minHeight:'90px',fontFamily:'sans-serif',boxSizing:'border-box',outline:'none'}}
+                style={{flex:1,padding:'10px',borderRadius:'8px',border:editNote.trim()?'1px solid '+primary:'1px solid #ffcccc',fontSize:'13px',resize:'none',minHeight:'90px',fontFamily:'sans-serif',boxSizing:'border-box',outline:'none'}}
               />
-              <div style={{fontSize:'11px',color:'#999',marginTop:'4px'}}>This note will appear in the lead journey log</div>
+              <MicButton onTranscript={(text) => setEditNote(prev => prev ? prev + ' ' + text : text)} />
+            </div>
+            <div style={{fontSize:'11px',color:'#999',marginTop:'4px'}}>This note will appear in the lead journey log</div>
             </div>
 
             <button onClick={handleSave} disabled={saving} style={{width:'100%',padding:'14px',backgroundColor:saving?'#999':primary,color:'white',border:'none',borderRadius:'10px',fontSize:'15px',fontWeight:'500',cursor:'pointer'}}>
@@ -366,40 +367,57 @@ export default function EventDetailPage() {
                           <div style={{display:'flex',gap:'8px',marginTop:'4px',flexWrap:'wrap'}}>
                             {c.phone1 && <a href={'tel:'+c.phone1} style={{fontSize:'12px',color:primary,textDecoration:'none'}}>📞 {c.phone1}</a>}
                             {c.email && <a href={'mailto:'+c.email} style={{fontSize:'12px',color:'#4285F4',textDecoration:'none'}}>✉️ {c.email}</a>}
+                          <div style={{marginTop:'12px'}}>
+                            <VoiceFollowUp
+                              scanId={scan.id}
+                              contactName={scan.contacts?.[0]?.name}
+                              company={scan.company}
+                              onSaved={fetchData}
+                            />
+                          </div>
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {scanActivity.length > 0 && (
-                    <div>
-                      <div style={{fontSize:'11px',fontWeight:'500',color:'#999',marginBottom:'8px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Lead Journey</div>
-                      <div style={{position:'relative',paddingLeft:'18px'}}>
-                        <div style={{position:'absolute',left:'7px',top:'6px',bottom:'6px',width:'2px',backgroundColor:'#f0f0f0'}} />
-                        {scanActivity.map((a:any) => (
-                          <div key={a.id} style={{position:'relative',marginBottom:'10px'}}>
-                            <div style={{position:'absolute',left:'-14px',top:'4px',width:'10px',height:'10px',borderRadius:'50%',backgroundColor:primary,border:'2px solid white'}} />
-                            <div style={{fontSize:'12px',color:'#111',fontWeight:'500'}}>{(actionLabel[a.action]||((a:any)=>a.action))(a)}</div>
-                            <div style={{fontSize:'10px',color:'#bbb',marginTop:'1px'}}>
-                              {new Date(a.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})} · {new Date(a.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}
-                            </div>
-                            {a.note && (
-                              <div style={{fontSize:'12px',color:'#555',marginTop:'4px',padding:'6px 8px',backgroundColor:'#f9f9f9',borderRadius:'6px',borderLeft:'2px solid #ddd',fontStyle:'italic'}}>
-                                "{a.note}"
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                  <div style={{marginTop:'12px',marginBottom:'4px'}}>
+  <VoiceFollowUp
+    scanId={scan.id}
+    contactName={scan.contacts?.[0]?.name}
+    company={scan.company}
+    onSaved={fetchData}
+  />
+</div>
+
+{scanActivity.length > 0 && (
+  <div>
+    <div style={{fontSize:'11px',fontWeight:'500',color:'#999',marginBottom:'8px',textTransform:'uppercase',letterSpacing:'0.05em'}}>Lead Journey</div>
+    <div style={{position:'relative',paddingLeft:'18px'}}>
+      <div style={{position:'absolute',left:'7px',top:'6px',bottom:'6px',width:'2px',backgroundColor:'#f0f0f0'}} />
+      {scanActivity.map((a:any) => (
+        <div key={a.id} style={{position:'relative',marginBottom:'10px'}}>
+          <div style={{position:'absolute',left:'-14px',top:'4px',width:'10px',height:'10px',borderRadius:'50%',backgroundColor:primary,border:'2px solid white'}} />
+          <div style={{fontSize:'12px',color:'#111',fontWeight:'500'}}>{(actionLabel[a.action]||((a:any)=>a.action))(a)}</div>
+          <div style={{fontSize:'10px',color:'#bbb',marginTop:'1px'}}>
+            {new Date(a.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})} · {new Date(a.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}
+          </div>
+          {a.note && (
+            <div style={{fontSize:'12px',color:'#555',marginTop:'4px',padding:'6px 8px',backgroundColor:'#f9f9f9',borderRadius:'6px',borderLeft:'2px solid #ddd',fontStyle:'italic'}}>
+              "{a.note}"
             </div>
-          )
-        })}
-      </div>
+          )}
+        </div>
+      ))}
     </div>
-  )
+  </div>
+)}
+</div>
+)}
+</div>
+)
+})}
+</div>
+</div>
+)
 }

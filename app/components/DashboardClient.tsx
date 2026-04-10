@@ -203,6 +203,7 @@ export default function DashboardClient({ profile, userId, totalScans, totalCont
               { label: 'Exhibitions', icon: '🏪', path: '/events' },
               { label: 'Scan Card', icon: '📷', path: '/scan' },
               { label: 'Team', icon: '👥', path: '/team' },
+              { label: 'Follow-ups', icon: '🔔', path: '/followups' },
               { label: 'Settings', icon: '⚙️', tab: 'settings' },
             ].map((item, i) => {
               const isCurrentTab = item.tab && activeTab === item.tab
@@ -523,6 +524,7 @@ export default function DashboardClient({ profile, userId, totalScans, totalCont
           { label: 'Home', icon: '🏠', action: () => setActiveTab('home'), active: activeTab === 'home' },
           { label: 'Contacts', icon: '📇', action: () => router.push('/contacts'), active: false },
           { label: 'Events', icon: '🏪', action: () => router.push('/events'), active: false },
+          { label: 'Follow-ups', icon: '🔔', action: () => router.push('/followups'), active: false },
           { label: 'Add', icon: '📷', action: () => setActiveTab('add'), active: activeTab === 'add' },
           { label: 'Settings', icon: '⚙️', action: () => setActiveTab('settings'), active: activeTab === 'settings' },
         ].map((item, i) => (

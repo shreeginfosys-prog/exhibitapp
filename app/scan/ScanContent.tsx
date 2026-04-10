@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { createClient } from '../../lib/supabase'
 import { useSearchParams } from 'next/navigation'
+import MicButton from '../components/MicButton'
 
 export default function ScanPageContent() {
   const supabase = createClient()
@@ -278,7 +279,16 @@ export default function ScanPageContent() {
                 ))}
               </div>
               <div style={{fontSize:'13px',fontWeight:'500',marginBottom:'8px',color:'#111'}}>Note</div>
-              <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Add a note about this contact..." style={{width:'100%',padding:'10px',borderRadius:'8px',border:'1px solid #ddd',fontSize:'13px',resize:'none',minHeight:'80px',fontFamily:'sans-serif',boxSizing:'border-box'}} />
+              <div style={{fontSize:'13px',fontWeight:'500',marginBottom:'8px',color:'#111'}}>Note</div>
+              <div style={{display:'flex',gap:'8px',alignItems:'flex-start'}}>
+                <textarea
+                  value={note}
+                  onChange={e=>setNote(e.target.value)}
+                  placeholder="Type or hold 🎤 to speak..."
+                  style={{flex:1,padding:'10px',borderRadius:'8px',border:'1px solid #ddd',fontSize:'13px',resize:'none',minHeight:'80px',fontFamily:'sans-serif',boxSizing:'border-box'}}
+                />
+                <MicButton onTranscript={(text) => setNote(prev => prev ? prev + ' ' + text : text)} />
+              </div>
             </div>
 
             {!saved ? (
