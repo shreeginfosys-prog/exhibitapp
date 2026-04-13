@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '../../lib/supabase'
 import { useRouter } from 'next/navigation'
+import MobileLayout from '../components/MobileLayout'
 
 export default function TeamPage() {
   const supabase = createClient()
@@ -58,7 +59,7 @@ export default function TeamPage() {
   }
 
   const handleRemove = async (id: string) => {
-    if (!confirm('Remove this team member? Their data will be removed from your team but their account remains.')) return
+    if (!confirm('Remove this team member?')) return
     await supabase.from('team_members').delete().eq('id', id)
     fetchData()
   }
@@ -79,14 +80,18 @@ export default function TeamPage() {
     }
   }
 
-  if (loading) return <div style={{padding:'24px',textAlign:'center',color:'#999',fontFamily:'sans-serif'}}>Loading...</div>
+  if (loading) return (
+    <MobileLayout>
+      <div style={{padding:'24px',textAlign:'center',color:'#999'}}>Loading...</div>
+    </MobileLayout>
+  )
 
   const isEnterprise = profile?.account_type === 'enterprise'
-  const isExhibitor = profile?.account_type === 'exhibitor'
 
   return (
-    <div style={{padding:'24px',maxWidth:'480px',margin:'0 auto',fontFamily:'sans-serif',paddingBottom:'40px'}}>
+    <MobileLayout>
 
+      {/* Payment modal */}
       {paymentModal && (
         <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
           <div style={{backgroundColor:'white',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'360px'}}>
@@ -105,7 +110,13 @@ export default function TeamPage() {
 
             <div style={{borderTop:'1px solid #eee',paddingTop:'12px'}}>
               <div style={{fontSize:'13px',color:'#666',marginBottom:'8px'}}>Have a coupon code?</div>
-              <input value={coupon} onChange={e=>{setCoupon(e.target.value);setCouponError('')}} placeholder="Enter coupon code" style={{width:'100%',padding:'10px 12px',borderRadius:'8px',border:'1px solid #ddd',fontSize:'14px',fontFamily:'sans-serif',boxSizing:'border-box',marginBottom:'8px',textTransform:'uppercase'}} onKeyDown={e=>e.key==='Enter'&&handleActivate()} />
+              <input
+                value={coupon}
+                onChange={e=>{setCoupon(e.target.value);setCouponError('')}}
+                placeholder="Enter coupon code"
+                style={{width:'100%',padding:'10px 12px',borderRadius:'8px',border:'1px solid #ddd',fontSize:'14px',fontFamily:'sans-serif',boxSizing:'border-box',marginBottom:'8px',textTransform:'uppercase'}}
+                onKeyDown={e=>e.key==='Enter'&&handleActivate()}
+              />
               {couponError && <div style={{fontSize:'12px',color:'#cc0000',marginBottom:'8px'}}>{couponError}</div>}
               {couponSuccess && <div style={{fontSize:'12px',color:primary,marginBottom:'8px',fontWeight:'500'}}>✓ Team activated! Invites sent.</div>}
               <button onClick={handleActivate} style={{width:'100%',padding:'11px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer',marginBottom:'8px'}}>
@@ -119,78 +130,85 @@ export default function TeamPage() {
         </div>
       )}
 
-      <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'20px'}}>
-        <button onClick={()=>router.push('/dashboard')} style={{background:'none',border:'none',color:'#999',fontSize:'14px',cursor:'pointer',padding:0}}>← Back</button>
-        <h1 style={{fontSize:'20px',fontWeight:'500',margin:0}}>Team Members</h1>
+      {/* Header */}
+      <div style={{backgroundColor:primary,padding:'16px 20px 20px'}}>
+        <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif",marginBottom:'4px'}}>Team Members</div>
+        <div style={{fontSize:'12px',color:'rgba(255,255,255,0.7)'}}>{members.length}/{maxUsers} members added</div>
       </div>
 
-      <div style={{backgroundColor:'#EAF3DE',border:'1px solid #C0DD97',borderRadius:'12px',padding:'14px',marginBottom:'20px'}}>
-        <div style={{fontSize:'13px',color:'#27500A'}}>
-          {isEnterprise
-            ? '🏢 Enterprise — up to 5 team members. Shared contacts dashboard.'
-            : '🏪 Exhibitor — up to 2 team members. Each member has private contacts.'}
-        </div>
-        <div style={{fontSize:'12px',color:'#3B6D11',marginTop:'4px'}}>
-          {members.length}/{maxUsers} members added
-        </div>
-      </div>
+      <div style={{padding:'16px'}}>
 
-      {members.length < maxUsers && (
-        <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'16px',marginBottom:'16px'}}>
-          <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'10px'}}>Add team member</div>
-          <input
-            value={email}
-            onChange={e=>{setEmail(e.target.value);setError('')}}
-            placeholder="Enter email address"
-            type="email"
-            style={{width:'100%',padding:'10px 12px',borderRadius:'8px',border:error?'1px solid #ffcccc':'1px solid #ddd',fontSize:'14px',fontFamily:'sans-serif',boxSizing:'border-box',marginBottom:'8px'}}
-            onKeyDown={e=>e.key==='Enter'&&handleAddMember()}
-          />
-          {error && <div style={{fontSize:'12px',color:'#cc0000',marginBottom:'8px'}}>{error}</div>}
-          <button onClick={handleAddMember} disabled={adding} style={{width:'100%',padding:'10px',backgroundColor:adding?'#999':primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}>
-            {adding ? 'Adding...' : 'Add Member'}
-          </button>
-        </div>
-      )}
-
-      {members.length > 0 && (
-        <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',overflow:'hidden',marginBottom:'16px'}}>
-          <div style={{padding:'12px 16px',borderBottom:'1px solid #f0f0f0',fontSize:'13px',fontWeight:'500',color:'#111'}}>
-            Team members
+        {/* Plan info */}
+        <div style={{backgroundColor:'#EAF3DE',border:'1px solid #C0DD97',borderRadius:'12px',padding:'14px',marginBottom:'16px'}}>
+          <div style={{fontSize:'13px',color:'#27500A'}}>
+            {isEnterprise
+              ? '🏢 Enterprise — up to 5 team members'
+              : '🏪 Exhibitor — up to 2 team members'}
           </div>
-          {members.map((member,i) => (
-            <div key={member.id} style={{display:'flex',alignItems:'center',gap:'10px',padding:'12px 16px',borderBottom:i<members.length-1?'1px solid #f5f5f5':'none'}}>
-              <div style={{width:'36px',height:'36px',borderRadius:'50%',backgroundColor:'#E6F1FB',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#0C447C',fontWeight:'500',flexShrink:0}}>
-                {member.member_email[0].toUpperCase()}
-              </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:'13px',color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{member.member_email}</div>
-                <div style={{fontSize:'11px',color:member.status==='active'?'#27500A':'#999',marginTop:'1px'}}>
-                  {member.status==='active' ? '● Active' : member.status==='invited' ? 'Invite sent' : 'Pending activation'}
-                </div>
-              </div>
-              <button onClick={()=>handleRemove(member.id)} style={{padding:'5px 10px',backgroundColor:'#fff0f0',color:'#cc0000',border:'1px solid #ffcccc',borderRadius:'6px',fontSize:'11px',cursor:'pointer',flexShrink:0}}>
-                Remove
-              </button>
+          <div style={{fontSize:'12px',color:'#3B6D11',marginTop:'4px'}}>
+            Each member scans under your account. Their leads appear in your dashboard.
+          </div>
+        </div>
+
+        {/* Add member */}
+        {members.length < maxUsers && (
+          <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'16px',marginBottom:'16px'}}>
+            <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'10px'}}>Add team member</div>
+            <input
+              value={email}
+              onChange={e=>{setEmail(e.target.value);setError('')}}
+              placeholder="Enter email address"
+              type="email"
+              style={{width:'100%',padding:'10px 12px',borderRadius:'8px',border:error?'1px solid #ffcccc':'1px solid #ddd',fontSize:'14px',fontFamily:'sans-serif',boxSizing:'border-box',marginBottom:'8px'}}
+              onKeyDown={e=>e.key==='Enter'&&handleAddMember()}
+            />
+            {error && <div style={{fontSize:'12px',color:'#cc0000',marginBottom:'8px'}}>{error}</div>}
+            <button onClick={handleAddMember} disabled={adding} style={{width:'100%',padding:'10px',backgroundColor:adding?'#999':primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}>
+              {adding ? 'Adding...' : 'Add Member'}
+            </button>
+          </div>
+        )}
+
+        {/* Members list */}
+        {members.length > 0 && (
+          <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',overflow:'hidden',marginBottom:'16px'}}>
+            <div style={{padding:'12px 16px',borderBottom:'1px solid #f0f0f0',fontSize:'13px',fontWeight:'500',color:'#111'}}>
+              Team members
             </div>
-          ))}
-        </div>
-      )}
+            {members.map((member,i) => (
+              <div key={member.id} style={{display:'flex',alignItems:'center',gap:'10px',padding:'12px 16px',borderBottom:i<members.length-1?'1px solid #f5f5f5':'none'}}>
+                <div style={{width:'36px',height:'36px',borderRadius:'50%',backgroundColor:'#E6F1FB',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#0C447C',fontWeight:'500',flexShrink:0}}>
+                  {member.member_email[0].toUpperCase()}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:'13px',color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{member.member_email}</div>
+                  <div style={{fontSize:'11px',color:member.status==='active'?'#27500A':'#999',marginTop:'1px'}}>
+                    {member.status==='active' ? '● Active' : member.status==='invited' ? 'Invite sent' : 'Pending activation'}
+                  </div>
+                </div>
+                <button onClick={()=>handleRemove(member.id)} style={{padding:'5px 10px',backgroundColor:'#fff0f0',color:'#cc0000',border:'1px solid #ffcccc',borderRadius:'6px',fontSize:'11px',cursor:'pointer',flexShrink:0}}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
-      {members.length > 0 && (
-        <button
-          onClick={()=>setPaymentModal(true)}
-          style={{width:'100%',padding:'14px',backgroundColor:primary,color:'white',border:'none',borderRadius:'10px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}
-        >
-          Activate & Send Invites →
-        </button>
-      )}
+        {/* Activate button */}
+        {members.length > 0 && (
+          <button onClick={()=>setPaymentModal(true)} style={{width:'100%',padding:'14px',backgroundColor:primary,color:'white',border:'none',borderRadius:'10px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}>
+            Activate & Send Invites →
+          </button>
+        )}
 
-      {members.length === 0 && (
-        <div style={{textAlign:'center',padding:'30px',color:'#999',fontSize:'13px'}}>
-          Add team members above then activate to send invite links
-        </div>
-      )}
-    </div>
+        {members.length === 0 && (
+          <div style={{textAlign:'center',padding:'40px',color:'#999',fontSize:'13px'}}>
+            <div style={{fontSize:'40px',marginBottom:'12px'}}>👥</div>
+            Add team members above then activate to send invite links
+          </div>
+        )}
+
+      </div>
+    </MobileLayout>
   )
 }

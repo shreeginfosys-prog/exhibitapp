@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '../../lib/supabase'
 import { useRouter } from 'next/navigation'
+import MobileLayout from '../components/MobileLayout'
 
 export default function EventsPage() {
   const supabase = createClient()
@@ -78,10 +79,12 @@ export default function EventsPage() {
 
   const getStats = (event: any) => {
     const scans = event.scans || []
-    const total = scans.length
-    const hot = scans.filter((s:any) => s.tag === 'Hot').length
-    const done = scans.filter((s:any) => s.lead_status === 'done').length
-    return {total, hot, done}
+    return {
+      total: scans.length,
+      hot: scans.filter((s:any) => s.tag === 'Hot').length,
+      done: scans.filter((s:any) => s.lead_status === 'done').length,
+      revenue: scans.reduce((sum:number, s:any) => sum + (Number(s.deal_value)||0), 0)
+    }
   }
 
   const now = new Date()
@@ -91,19 +94,28 @@ export default function EventsPage() {
     const start = new Date(event.start_date)
     const end = new Date(event.end_date)
     if (now < start) return {label:'Upcoming',color:'#185FA5',bg:'#E6F1FB'}
-    if (now >= start && now <= end) return {label:'Live ●',color:'#27500A',bg:'#EAF3DE'}
+    if (now >= start && now <= end) return {label:'● Live',color:'#27500A',bg:'#EAF3DE'}
     return {label:'Ended',color:'#666',bg:'#f0f0f0'}
   }
 
-  const inputStyle = {width:'100%',padding:'10px 12px',borderRadius:'8px',border:'1px solid #ddd',fontSize:'14px',fontFamily:'sans-serif',boxSizing:'border-box' as const,marginBottom:'10px'}
+  const inputStyle: React.CSSProperties = {
+    width:'100%', padding:'10px 12px', borderRadius:'8px',
+    border:'1px solid #ddd', fontSize:'14px',
+    fontFamily:'sans-serif', boxSizing:'border-box', marginBottom:'10px'
+  }
 
-  if (loading) return <div style={{padding:'24px',textAlign:'center',color:'#999',fontFamily:'sans-serif'}}>Loading...</div>
+  if (loading) return (
+    <MobileLayout>
+      <div style={{padding:'24px',textAlign:'center',color:'#999'}}>Loading...</div>
+    </MobileLayout>
+  )
 
   return (
-    <div style={{padding:'24px',maxWidth:'480px',margin:'0 auto',fontFamily:'sans-serif',paddingBottom:'40px'}}>
+    <MobileLayout>
 
+      {/* Payment / activate modal */}
       {paymentModal && (
-        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:1999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
           <div style={{backgroundColor:'white',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'360px'}}>
             <div style={{fontSize:'18px',fontWeight:'500',color:'#111',marginBottom:'4px'}}>Activate Event</div>
             <div style={{fontSize:'13px',color:'#666',marginBottom:'16px'}}>🏪 {paymentModal.name}</div>
@@ -142,105 +154,133 @@ export default function EventsPage() {
         </div>
       )}
 
-      <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'20px'}}>
-        <button onClick={()=>router.push('/dashboard')} style={{background:'none',border:'none',color:'#999',fontSize:'14px',cursor:'pointer',padding:0}}>← Back</button>
-        <h1 style={{fontSize:'20px',fontWeight:'500',margin:0}}>My Exhibitions</h1>
+      {/* Header */}
+      <div style={{backgroundColor:primary,padding:'16px 20px 20px'}}>
+        <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif",marginBottom:'4px'}}>
+          My Exhibitions
+        </div>
+        <div style={{fontSize:'12px',color:'rgba(255,255,255,0.7)'}}>
+          {events.length} exhibition{events.length !== 1 ? 's' : ''}
+        </div>
       </div>
 
-      <button onClick={()=>setShowForm(!showForm)} style={{width:'100%',padding:'14px',backgroundColor:primary,color:'white',border:'none',borderRadius:'10px',fontSize:'14px',fontWeight:'500',cursor:'pointer',marginBottom:'16px'}}>
-        + Create New Exhibition
-      </button>
+      <div style={{padding:'16px'}}>
 
-      {showForm && (
-        <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'16px',marginBottom:'16px'}}>
-          <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'12px'}}>New Exhibition</div>
-          <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Exhibition name e.g. Gifts World Expo 2026" style={inputStyle} />
-          <input value={form.location} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Venue e.g. Pragati Maidan, Delhi" style={inputStyle} />
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
-            <div>
-              <div style={{fontSize:'11px',color:'#999',marginBottom:'4px'}}>Start date</div>
-              <input type="date" value={form.start_date} onChange={e=>setForm(f=>({...f,start_date:e.target.value}))} style={inputStyle} />
+        {/* Create button */}
+        <button
+          onClick={()=>setShowForm(!showForm)}
+          style={{width:'100%',padding:'14px',backgroundColor:showForm?'#f5f5f5':primary,color:showForm?'#666':'white',border:showForm?'1px solid #ddd':'none',borderRadius:'10px',fontSize:'14px',fontWeight:'500',cursor:'pointer',marginBottom:'16px'}}
+        >
+          {showForm ? '✕ Cancel' : '+ Create New Exhibition'}
+        </button>
+
+        {/* Create form */}
+        {showForm && (
+          <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'16px',marginBottom:'16px'}}>
+            <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'12px'}}>New Exhibition</div>
+            <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Exhibition name e.g. Gifts World Expo 2026" style={inputStyle} />
+            <input value={form.location} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Venue e.g. Pragati Maidan, Delhi" style={inputStyle} />
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+              <div>
+                <div style={{fontSize:'11px',color:'#999',marginBottom:'4px'}}>Start date</div>
+                <input type="date" value={form.start_date} onChange={e=>setForm(f=>({...f,start_date:e.target.value}))} style={inputStyle} />
+              </div>
+              <div>
+                <div style={{fontSize:'11px',color:'#999',marginBottom:'4px'}}>End date</div>
+                <input type="date" value={form.end_date} onChange={e=>setForm(f=>({...f,end_date:e.target.value}))} style={inputStyle} />
+              </div>
             </div>
-            <div>
-              <div style={{fontSize:'11px',color:'#999',marginBottom:'4px'}}>End date</div>
-              <input type="date" value={form.end_date} onChange={e=>setForm(f=>({...f,end_date:e.target.value}))} style={inputStyle} />
-            </div>
+            <button onClick={handleCreate} disabled={saving} style={{width:'100%',padding:'12px',backgroundColor:saving?'#999':primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}>
+              {saving ? 'Creating...' : 'Create Exhibition'}
+            </button>
           </div>
-          <button onClick={handleCreate} disabled={saving} style={{width:'100%',padding:'12px',backgroundColor:saving?'#999':primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer'}}>
-            {saving ? 'Creating...' : 'Create Exhibition'}
-          </button>
-        </div>
-      )}
+        )}
 
-      {events.length === 0 && !showForm && (
-        <div style={{textAlign:'center',padding:'40px 20px',backgroundColor:'white',borderRadius:'12px',border:'1px solid #eee'}}>
-          <div style={{fontSize:'36px',marginBottom:'10px'}}>🏪</div>
-          <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'4px'}}>No exhibitions yet</div>
-          <div style={{fontSize:'12px',color:'#999'}}>Create your first exhibition to start scanning</div>
-        </div>
-      )}
+        {/* Empty state */}
+        {events.length === 0 && !showForm && (
+          <div style={{textAlign:'center',padding:'48px 20px',backgroundColor:'white',borderRadius:'12px',border:'1px solid #eee'}}>
+            <div style={{fontSize:'48px',marginBottom:'12px'}}>🏪</div>
+            <div style={{fontSize:'15px',fontWeight:'500',color:'#111',marginBottom:'6px'}}>No exhibitions yet</div>
+            <div style={{fontSize:'13px',color:'#999'}}>Create your first exhibition to start scanning cards</div>
+          </div>
+        )}
 
-      {events.map(event => {
-        const stats = getStats(event)
-        const status = getEventStatus(event)
-        const isLive = event.paid && new Date(event.start_date) <= now && new Date(event.end_date) >= now
+        {/* Events list */}
+        {events.map(event => {
+          const stats = getStats(event)
+          const status = getEventStatus(event)
+          const isLive = event.paid && new Date(event.start_date) <= now && new Date(event.end_date) >= now
 
-        return (
-          <div key={event.id} style={{backgroundColor:'white',border:isLive?'2px solid '+primary:'1px solid #eee',borderRadius:'12px',padding:'16px',marginBottom:'10px'}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'10px'}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:'15px',fontWeight:'500',color:'#111'}}>{event.name}</div>
-                {event.location && <div style={{fontSize:'12px',color:'#999',marginTop:'2px'}}>📍 {event.location}</div>}
-                {event.start_date && (
-                  <div style={{fontSize:'12px',color:'#666',marginTop:'2px'}}>
-                    📅 {new Date(event.start_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}
-                    {event.end_date && ' — '+new Date(event.end_date).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
-                  </div>
-                )}
+          return (
+            <div key={event.id} style={{backgroundColor:'white',border:isLive?'2px solid '+primary:'1px solid #eee',borderRadius:'12px',padding:'16px',marginBottom:'10px'}}>
+
+              {/* Event header */}
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'12px'}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:'15px',fontWeight:'500',color:'#111'}}>{event.name}</div>
+                  {event.location && <div style={{fontSize:'12px',color:'#999',marginTop:'2px'}}>📍 {event.location}</div>}
+                  {event.start_date && (
+                    <div style={{fontSize:'12px',color:'#666',marginTop:'2px'}}>
+                      📅 {new Date(event.start_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}
+                      {event.end_date && ' — ' + new Date(event.end_date).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
+                    </div>
+                  )}
+                </div>
+                <span style={{padding:'3px 10px',borderRadius:'6px',backgroundColor:status.bg,color:status.color,fontSize:'11px',fontWeight:'500',flexShrink:0,marginLeft:'8px'}}>
+                  {status.label}
+                </span>
               </div>
-              <span style={{padding:'3px 10px',borderRadius:'6px',backgroundColor:status.bg,color:status.color,fontSize:'11px',fontWeight:'500',flexShrink:0,marginLeft:'8px'}}>
-                {status.label}
-              </span>
-            </div>
 
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'6px',marginBottom:'12px'}}>
-              <div style={{backgroundColor:'#f9f9f9',borderRadius:'8px',padding:'8px',textAlign:'center'}}>
-                <div style={{fontSize:'18px',fontWeight:'500',color:'#111'}}>{stats.total}</div>
-                <div style={{fontSize:'10px',color:'#999'}}>Scanned</div>
+              {/* Stats */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'6px',marginBottom:'12px'}}>
+                <div style={{backgroundColor:'#f9f9f9',borderRadius:'8px',padding:'8px',textAlign:'center'}}>
+                  <div style={{fontSize:'18px',fontWeight:'500',color:'#111'}}>{stats.total}</div>
+                  <div style={{fontSize:'10px',color:'#999'}}>Scanned</div>
+                </div>
+                <div style={{backgroundColor:'#FAECE7',borderRadius:'8px',padding:'8px',textAlign:'center'}}>
+                  <div style={{fontSize:'18px',fontWeight:'500',color:'#D85A30'}}>{stats.hot}</div>
+                  <div style={{fontSize:'10px',color:'#993C1D'}}>Hot leads</div>
+                </div>
+                <div style={{backgroundColor:'#EAF3DE',borderRadius:'8px',padding:'8px',textAlign:'center'}}>
+                  <div style={{fontSize:'18px',fontWeight:'500',color:'#27500A'}}>{stats.done}</div>
+                  <div style={{fontSize:'10px',color:'#27500A'}}>Deals done</div>
+                </div>
               </div>
-              <div style={{backgroundColor:'#FAECE7',borderRadius:'8px',padding:'8px',textAlign:'center'}}>
-                <div style={{fontSize:'18px',fontWeight:'500',color:'#D85A30'}}>{stats.hot}</div>
-                <div style={{fontSize:'10px',color:'#993C1D'}}>Hot leads</div>
-              </div>
-              <div style={{backgroundColor:'#EAF3DE',borderRadius:'8px',padding:'8px',textAlign:'center'}}>
-                <div style={{fontSize:'18px',fontWeight:'500',color:'#27500A'}}>{stats.done}</div>
-                <div style={{fontSize:'10px',color:'#27500A'}}>Deals done</div>
-              </div>
-            </div>
 
-            {!event.paid ? (
-              <button onClick={()=>handleActivateClick(event)} style={{width:'100%',padding:'11px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'13px',fontWeight:'500',cursor:'pointer'}}>
-                Activate & Pay →
-              </button>
-            ) : (
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
-                <button onClick={()=>router.push('/events/'+event.id)} style={{padding:'10px',backgroundColor:'#f5f5f5',color:'#111',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
-                  📊 View Leads
+              {/* Revenue */}
+              {stats.revenue > 0 && (
+                <div style={{backgroundColor:'#EAF3DE',borderRadius:'8px',padding:'8px',textAlign:'center',marginBottom:'12px'}}>
+                  <span style={{fontSize:'13px',color:'#27500A',fontWeight:'500'}}>💰 ₹{stats.revenue.toLocaleString('en-IN')} deal value</span>
+                </div>
+              )}
+
+              {/* Actions */}
+              {!event.paid ? (
+                <button onClick={()=>handleActivateClick(event)} style={{width:'100%',padding:'11px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'13px',fontWeight:'500',cursor:'pointer'}}>
+                  Activate & Pay →
                 </button>
-                {isLive ? (
-                  <button onClick={()=>router.push('/scan?event='+event.id)} style={{padding:'10px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
-                    📷 Scan Card
+              ) : (
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+                  <button onClick={()=>router.push('/events/'+event.id)} style={{padding:'10px',backgroundColor:'#f5f5f5',color:'#111',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
+                    📊 View Leads
                   </button>
-                ) : (
-                  <button disabled style={{padding:'10px',backgroundColor:'#f0f0f0',color:'#999',border:'none',borderRadius:'8px',fontSize:'12px',cursor:'not-allowed'}}>
-                    {new Date(event.start_date) > now ? 'Not started' : 'Event ended'}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
+                  {isLive ? (
+                    <button onClick={()=>router.push('/scan?event='+event.id)} style={{padding:'10px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
+                      📷 Scan Card
+                    </button>
+                  ) : (
+                    <button disabled style={{padding:'10px',backgroundColor:'#f0f0f0',color:'#999',border:'none',borderRadius:'8px',fontSize:'12px',cursor:'not-allowed'}}>
+                      {new Date(event.start_date) > now ? 'Not started yet' : 'Event ended'}
+                    </button>
+                  )}
+                </div>
+              )}
+
+            </div>
+          )
+        })}
+
+      </div>
+    </MobileLayout>
   )
 }

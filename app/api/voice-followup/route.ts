@@ -18,8 +18,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Audio too short — please hold and speak clearly' })
     }
 
-    const ext = mimeType?.includes('mp4') ? 'mp4' : mimeType?.includes('ogg') ? 'ogg' : 'webm'
-    const audioFile = new File([buffer], `audio.${ext}`, { type: mimeType || 'audio/webm' })
+    // Strip codec suffix — Whisper only accepts base mime type
+    const cleanMime = (mimeType || 'audio/webm').split(';')[0].trim()
+    const ext = cleanMime.includes('mp4') ? 'mp4' : cleanMime.includes('ogg') ? 'ogg' : 'webm'
+    const audioFile = new File([buffer], `audio.${ext}`, { type: cleanMime })
 
     let transcriptText = ''
     // If textOnly mode — just return transcript, skip Gemini

@@ -93,6 +93,8 @@ export default function MicButton({ onTranscript, disabled }: Props) {
 
   const transcribeWhisper = async (blob: Blob, mimeType: string) => {
     try {
+      console.log('Blob size:', blob.size, 'type:', blob.type, 'mimeType:', mimeType)
+      
       if (blob.size < 500) {
         setError('Too short — hold and speak')
         setTimeout(() => setError(''), 3000)
@@ -107,20 +109,25 @@ export default function MicButton({ onTranscript, disabled }: Props) {
         reader.readAsDataURL(blob)
       })
 
+      console.log('Base64 length:', base64.length)
+
       const res = await fetch('/api/voice-followup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio: base64, mimeType, textOnly: true })
+        body: JSON.stringify({ audio: base64, mimeType: mimeType || blob.type || 'audio/webm', textOnly: true })
       })
 
       const data = await res.json()
+      console.log('API response:', data)
+      
       if (data.success && data.transcript) {
         onTranscript(data.transcript)
       } else {
         setError(data.error || 'Try again')
         setTimeout(() => setError(''), 3000)
       }
-    } catch (e) {
+    } catch (e: any) {
+      console.error('Transcribe error:', e)
       setError('Failed — try again')
       setTimeout(() => setError(''), 3000)
     } finally {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '../../lib/supabase'
+import MobileLayout from '../components/MobileLayout'
 
 export default function ContactsPage() {
   const supabase = createClient()
@@ -14,6 +15,8 @@ export default function ContactsPage() {
   const [viewingCard, setViewingCard] = useState<string | null>(null)
   const [dealModal, setDealModal] = useState<string | null>(null)
   const [dealValue, setDealValue] = useState('')
+  const [statusNote, setStatusNote] = useState<Record<string, string>>({})
+  const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({})
   const primary = '#0F6E56'
 
   useEffect(() => { fetchData() }, [])
@@ -32,7 +35,7 @@ export default function ContactsPage() {
     setLoading(false)
   }
 
-  const updateLeadStatus = async (scanId: string, status: string, value?: number) => {
+  const updateLeadStatus = async (scanId: string, status: string, value?: number, note?: string) => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { data: profile } = await supabase.from('users').select('name').eq('id', user.id).single()
@@ -40,6 +43,7 @@ export default function ContactsPage() {
 
     const update: any = { lead_status: status }
     if (value !== undefined) update.deal_value = value
+    if (note) update.note = note
     await supabase.from('scans').update(update).eq('id', scanId)
 
     await supabase.from('lead_activity').insert({
@@ -47,12 +51,25 @@ export default function ContactsPage() {
       user_id: user.id,
       user_name: userName,
       action: status === 'done' ? 'deal_done' : 'status_changed',
-      new_value: status === 'done' ? String(value || 0) : status
+      new_value: status === 'done' ? String(value || 0) : status,
+      note: note || ''
     })
 
     setScans(prev => prev.map(s => s.id === scanId ? { ...s, ...update } : s))
     setDealModal(null)
     setDealValue('')
+    setPendingStatus(prev => { const n = {...prev}; delete n[scanId]; return n })
+    setStatusNote(prev => { const n = {...prev}; delete n[scanId]; return n })
+  }
+
+  const handleStatusChange = (scanId: string, newStatus: string, currentStatus: string) => {
+    if (newStatus === currentStatus) return
+    if (newStatus === 'done') {
+      setDealModal(scanId)
+      return
+    }
+    setPendingStatus(prev => ({ ...prev, [scanId]: newStatus }))
+    setStatusNote(prev => ({ ...prev, [scanId]: '' }))
   }
 
   const exportCSV = () => {
@@ -91,7 +108,7 @@ export default function ContactsPage() {
     'new':{label:'New',color:'#888',bg:'#f0f0f0'},
     'contacted':{label:'Contacted',color:'#185FA5',bg:'#E6F1FB'},
     'interested':{label:'Interested',color:'#BA7517',bg:'#FAEEDA'},
-    'done':{label:'Deal Done ✓',color:'#27500A',bg:'#EAF3DE'},
+    'done':{label:'Deal Done',color:'#27500A',bg:'#EAF3DE'},
     'lost':{label:'Not Now',color:'#993C1D',bg:'#FAECE7'},
   }
 
@@ -100,19 +117,25 @@ export default function ContactsPage() {
   const filtered = getFiltered()
   const totalDeals = filtered.filter(s=>s.lead_status==='done').length
 
-  if (loading) return <div style={{padding:'24px',textAlign:'center',color:'#999',marginTop:'60px',fontFamily:'sans-serif'}}>Loading...</div>
+  if (loading) return (
+    <MobileLayout>
+      <div style={{padding:'24px',textAlign:'center',color:'#999',marginTop:'60px'}}>Loading...</div>
+    </MobileLayout>
+  )
 
   return (
-    <div style={{padding:'0',maxWidth:'600px',margin:'0 auto',fontFamily:'sans-serif',paddingBottom:'40px'}}>
+    <MobileLayout>
 
+      {/* View card fullscreen */}
       {viewingCard && (
-        <div onClick={()=>setViewingCard(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.85)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+        <div onClick={()=>setViewingCard(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.85)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
           <img src={viewingCard} alt="card" style={{maxWidth:'100%',maxHeight:'90vh',borderRadius:'8px'}} />
         </div>
       )}
 
+      {/* Deal modal */}
       {dealModal && (
-        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:1999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
           <div style={{backgroundColor:'white',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'360px'}}>
             <div style={{fontSize:'16px',fontWeight:'500',color:'#111',marginBottom:'8px'}}>Deal Done! 🎉</div>
             <div style={{fontSize:'13px',color:'#666',marginBottom:'16px'}}>Enter the deal value (optional)</div>
@@ -125,13 +148,13 @@ export default function ContactsPage() {
         </div>
       )}
 
+      {/* Header */}
       <div style={{backgroundColor:primary,padding:'16px 20px 14px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}}>
-          <a href="/dashboard" style={{color:'rgba(255,255,255,0.7)',textDecoration:'none',fontSize:'13px'}}>← Dashboard</a>
-          <div style={{display:'flex',gap:'8px'}}>
-            <button onClick={exportCSV} style={{padding:'6px 12px',backgroundColor:'rgba(255,255,255,0.15)',color:'white',border:'none',borderRadius:'6px',fontSize:'12px',cursor:'pointer'}}>Export CSV</button>
-            <a href="/scan" style={{padding:'6px 12px',backgroundColor:'white',color:primary,borderRadius:'6px',fontSize:'12px',textDecoration:'none',fontWeight:'500'}}>+ Scan</a>
-          </div>
+          <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif"}}>My Contacts</div>
+          <button onClick={exportCSV} style={{padding:'6px 12px',backgroundColor:'rgba(255,255,255,0.15)',color:'white',border:'none',borderRadius:'6px',fontSize:'12px',cursor:'pointer'}}>
+            Export CSV
+          </button>
         </div>
 
         <div style={{display:'flex',backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'20px',padding:'2px',marginBottom:'12px',width:'fit-content'}}>
@@ -154,25 +177,29 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      <div style={{padding:'12px 16px 8px'}}>
+      {/* Filter pills */}
+      <div style={{padding:'12px 16px 8px',backgroundColor:'white',borderBottom:'1px solid #f0f0f0'}}>
         <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
           {filterTags.map(tag => {
             const active = activeFilter === tag
             const s = tag==='All' ? {color:'#111',bg:'#f0f0f0'} : tagStyle(tag)
-            const count = tag==='All' ? scans.filter(s=>(s.mode||'seller')===modeFilter).length : scans.filter(s=>(s.mode||'seller')===modeFilter && s.tag===tag).length
+            const count = tag==='All'
+              ? scans.filter(s=>(s.mode||'seller')===modeFilter).length
+              : scans.filter(s=>(s.mode||'seller')===modeFilter && s.tag===tag).length
             return (
-              <button key={tag} onClick={()=>{setActiveFilter(tag)}} style={{padding:'5px 12px',borderRadius:'20px',border:active?'2px solid '+s.color:'2px solid #eee',backgroundColor:active?s.bg:'white',color:active?s.color:'#999',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
-                {tag} {count>0?'('+count+')':''}
+              <button key={tag} onClick={()=>setActiveFilter(tag)} style={{padding:'5px 12px',borderRadius:'20px',border:active?'2px solid '+s.color:'2px solid #eee',backgroundColor:active?s.bg:'white',color:active?s.color:'#999',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
+                {tag}{count>0?' ('+count+')':''}
               </button>
             )
           })}
         </div>
       </div>
 
+      {/* List */}
       <div style={{padding:'8px 16px 24px'}}>
         {filtered.length === 0 && (
           <div style={{textAlign:'center',padding:'40px 20px',color:'#999'}}>
-            <div style={{fontSize:'36px',marginBottom:'10px'}}>��</div>
+            <div style={{fontSize:'36px',marginBottom:'10px'}}>📇</div>
             <div style={{fontSize:'14px',color:'#666'}}>No contacts in {modeFilter} mode</div>
           </div>
         )}
@@ -180,10 +207,12 @@ export default function ContactsPage() {
         {filtered.map(scan => {
           const status = scan.lead_status || 'new'
           const statusInfo = statusConfig[status] || statusConfig['new']
+          const hasPending = pendingStatus[scan.id]
 
           return (
-            <div key={scan.id} style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',marginBottom:'10px'}}>
+            <div key={scan.id} style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',marginBottom:'10px',overflow:'hidden'}}>
 
+              {/* Card header — tap to expand */}
               <div style={{padding:'14px 16px',cursor:'pointer'}} onClick={()=>setExpandedScan(expandedScan===scan.id?null:scan.id)}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
                   <div style={{flex:1,minWidth:0}}>
@@ -200,30 +229,64 @@ export default function ContactsPage() {
                     {scan.image_url && (
                       <img src={scan.image_url} alt="card" onClick={(e)=>{e.stopPropagation();setViewingCard(scan.image_url)}} style={{width:'48px',height:'30px',objectFit:'cover',borderRadius:'4px',border:'1px solid #eee',cursor:'zoom-in'}} />
                     )}
-                    <div style={{fontSize:'10px',color:'#ccc'}}>{scan.contacts?.length||0} people ▾</div>
+                    <div style={{fontSize:'10px',color:'#ccc'}}>{scan.contacts?.length||0} {expandedScan===scan.id?'▴':'▾'}</div>
                   </div>
                 </div>
               </div>
 
+              {/* FIX 4 — Status with mandatory note */}
               {isSeller && (
-                <div style={{padding:'0 16px 12px',borderTop:'1px solid #f9f9f9',display:'flex',alignItems:'center',gap:'8px'}}>
-                  <select
-                    value={status}
-                    onChange={(e)=>{
-                      const val = e.target.value
-                      if (val==='done') { setDealModal(scan.id) }
-                      else { updateLeadStatus(scan.id, val) }
-                    }}
-                    style={{padding:'4px 8px',borderRadius:'6px',border:'1px solid '+statusInfo.color,backgroundColor:statusInfo.bg,color:statusInfo.color,fontSize:'12px',fontWeight:'500',cursor:'pointer',outline:'none'}}
-                  >
-                    <option value="new">New</option>
-                    <option value="contacted">Contacted</option>
-                    <option value="interested">Interested</option>
-                    <option value="done">Deal Done</option>
-                    <option value="lost">Not Now</option>
-                  </select>
-                  {status==='done' && scan.deal_value>0 && (
-                    <span style={{fontSize:'12px',color:'#27500A',fontWeight:'500'}}>₹{Number(scan.deal_value).toLocaleString('en-IN')}</span>
+                <div style={{padding:'0 16px 12px',borderTop:'1px solid #f9f9f9'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                    <select
+                      value={hasPending || status}
+                      onChange={(e) => handleStatusChange(scan.id, e.target.value, status)}
+                      style={{padding:'5px 8px',borderRadius:'6px',border:'1px solid '+(hasPending?statusConfig[hasPending]?.color||'#ddd':statusInfo.color),backgroundColor:hasPending?statusConfig[hasPending]?.bg||'#f9f9f9':statusInfo.bg,color:hasPending?statusConfig[hasPending]?.color||'#666':statusInfo.color,fontSize:'12px',fontWeight:'500',cursor:'pointer',outline:'none'}}
+                    >
+                      <option value="new">New</option>
+                      <option value="contacted">Contacted</option>
+                      <option value="interested">Interested</option>
+                      <option value="done">Deal Done</option>
+                      <option value="lost">Not Now</option>
+                    </select>
+                    {status==='done' && scan.deal_value>0 && (
+                      <span style={{fontSize:'12px',color:'#27500A',fontWeight:'500'}}>₹{Number(scan.deal_value).toLocaleString('en-IN')}</span>
+                    )}
+                  </div>
+
+                  {hasPending && (
+                    <div style={{marginTop:'10px',padding:'10px',backgroundColor:'#fffbf0',borderRadius:'8px',border:'1px solid #f5e6a3'}}>
+                      <div style={{fontSize:'12px',color:'#666',marginBottom:'6px',fontWeight:'500'}}>
+                        Why are you changing to <span style={{color:statusConfig[hasPending]?.color||primary}}>{statusConfig[hasPending]?.label}</span>? <span style={{color:'#cc0000'}}>*</span>
+                      </div>
+                      <textarea
+                        value={statusNote[scan.id] || ''}
+                        onChange={e => setStatusNote(prev => ({...prev, [scan.id]: e.target.value}))}
+                        placeholder="Add a note — e.g. Called today, they are interested in 500 units..."
+                        autoFocus
+                        style={{width:'100%',padding:'8px',borderRadius:'6px',border:'1px solid #ddd',fontSize:'12px',resize:'none',minHeight:'60px',fontFamily:'sans-serif',boxSizing:'border-box',outline:'none'}}
+                      />
+                      <div style={{display:'flex',gap:'6px',marginTop:'6px'}}>
+                        <button
+                          onClick={() => {
+                            if (!statusNote[scan.id]?.trim()) { alert('Please add a note before saving'); return }
+                            updateLeadStatus(scan.id, hasPending, undefined, statusNote[scan.id])
+                          }}
+                          style={{flex:1,padding:'8px',backgroundColor:primary,color:'white',border:'none',borderRadius:'6px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => {
+                            setPendingStatus(prev => { const n={...prev}; delete n[scan.id]; return n })
+                            setStatusNote(prev => { const n={...prev}; delete n[scan.id]; return n })
+                          }}
+                          style={{padding:'8px 12px',backgroundColor:'#f5f5f5',color:'#666',border:'none',borderRadius:'6px',fontSize:'12px',cursor:'pointer'}}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
@@ -234,38 +297,53 @@ export default function ContactsPage() {
                 </div>
               )}
 
+              {/* FIX 5 — Phone + WhatsApp icons */}
               {expandedScan===scan.id && scan.contacts && scan.contacts.length>0 && (
                 <div style={{borderTop:'1px solid #f0f0f0',padding:'12px 16px'}}>
                   {scan.address && <div style={{fontSize:'12px',color:'#999',marginBottom:'8px'}}>📍 {scan.address}</div>}
                   {scan.contacts.map((contact:any)=>(
                     <div key={contact.id} style={{padding:'10px',backgroundColor:'#fafafa',borderRadius:'8px',marginBottom:'8px'}}>
-                      <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'6px'}}>
+                      <div style={{fontSize:'14px',fontWeight:'500',color:'#111',marginBottom:'8px'}}>
                         {contact.name}
                         {contact.designation && <span style={{fontSize:'12px',color:'#666',fontWeight:'400'}}> · {contact.designation}</span>}
                       </div>
+
                       {[contact.phone1,contact.phone2,contact.phone3].filter(Boolean).map((ph:string,j:number)=>(
-                        <div key={j} style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}}>
-                          <span style={{fontSize:'13px',color:'#444'}}>{ph}</span>
-                          <a href={'tel:'+ph} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'28px',height:'28px',borderRadius:'50%',backgroundColor:'#EAF3DE',textDecoration:'none',fontSize:'14px'}}>📞</a>
-                          {isSeller && (
-                            <a href={'https://wa.me/91'+ph.replace(/\D/g,'')+'?text='+encodeURIComponent(template)} target="_blank" rel="noreferrer" style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'28px',height:'28px',borderRadius:'50%',backgroundColor:'#E1F5EE',textDecoration:'none',fontSize:'14px'}}>💬</a>
-                          )}
+                        <div key={j} style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
+                          <span style={{fontSize:'13px',color:'#333',flex:1}}>{ph}</span>
+                          <a
+                            href={'tel:'+ph}
+                            style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'50%',backgroundColor:'#EAF3DE',textDecoration:'none',fontSize:'16px',flexShrink:0}}
+                          >
+                            📞
+                          </a>
+                          <a
+                            href={'https://wa.me/91'+ph.replace(/\D/g,'')+'?text='+encodeURIComponent(template)}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'50%',backgroundColor:'#E7F7EE',textDecoration:'none',fontSize:'16px',flexShrink:0}}
+                          >
+                            💬
+                          </a>
                         </div>
                       ))}
+
                       {contact.email && (
                         <div style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'4px'}}>
-                          <span style={{fontSize:'12px',color:'#444'}}>{contact.email}</span>
-                          <a href={'mailto:'+contact.email} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'28px',height:'28px',borderRadius:'50%',backgroundColor:'#E6F1FB',textDecoration:'none',fontSize:'14px'}}>✉️</a>
+                          <span style={{fontSize:'12px',color:'#444',flex:1}}>{contact.email}</span>
+                          <a href={'mailto:'+contact.email} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'50%',backgroundColor:'#E6F1FB',textDecoration:'none',fontSize:'16px',flexShrink:0}}>✉️</a>
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
               )}
+
             </div>
           )
         })}
       </div>
-    </div>
+
+    </MobileLayout>
   )
 }
