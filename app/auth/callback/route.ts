@@ -35,8 +35,8 @@ export async function GET(request: Request) {
 
         if (!profile) {
   // Check if this is an invited sub-user
-  const ownerId = requestUrl.searchParams.get('owner')
-  const inviteType = requestUrl.searchParams.get('type')
+  const ownerId = new URL(request.url).searchParams.get('owner')
+  const inviteType = new URL(request.url).searchParams.get('type')
 
   if (inviteType === 'invite' && ownerId) {
     // Create sub-user profile linked to owner
