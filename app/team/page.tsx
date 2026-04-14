@@ -32,6 +32,11 @@ export default function TeamPage() {
     const { data: team } = await supabase.from('team_members').select('*').eq('owner_id', user.id).order('created_at', { ascending: false })
     setMembers(team || [])
     setLoading(false)
+    // Sub-users cannot access team management
+    if (prof?.parent_user_id) {
+    router.push('/dashboard')
+    return
+    }
   }
 
   const maxUsers = profile?.account_type === 'enterprise' ? 5 : 2
@@ -243,7 +248,7 @@ export default function TeamPage() {
         )}
 
         {members.length === 0 && (
-          <div style={{textAlign:'center',padding:'40px',color:'#999',fontSize:'13px'}}>
+          <div style={{textAlign:'center',padding:'40px',color:'#575353ff',fontSize:'13px'}}>
             <div style={{fontSize:'40px',marginBottom:'12px'}}>👥</div>
             Add team members above then activate to send invite links
           </div>

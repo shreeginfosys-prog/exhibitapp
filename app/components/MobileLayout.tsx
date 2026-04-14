@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import { createClient } from '../../lib/supabase'
 
 const primary = '#0F6E56'
+const supabase = createClient()
 
 const NAV = [
   { label: 'Home', icon: '🏠', path: '/dashboard' },
@@ -16,7 +18,30 @@ const NAV = [
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
+  const [isSubUser, setIsSubUser] = useState(false)
+
+  useEffect(() => {
+    const checkUser = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from('users')
+            .select('parent_user_id')
+            .eq('id', session.user.id)
+            .single()
+          if (profile?.parent_user_id) setIsSubUser(true)
+        }
+      } catch (e) {
+        // silently fail — nav will show all items
+      }
+    }
+    checkUser()
+  }, [])
+
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + '/')
+
+  const visibleNav = NAV.filter(item => !(item.path === '/team' && isSubUser))
 
   return (
     <div style={{
@@ -40,7 +65,6 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
         {children}
       </div>
 
-      {/* Bottom nav bar */}
       <div style={{
         position: 'fixed',
         bottom: 0,
@@ -54,7 +78,7 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
         zIndex: 1000,
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}>
-        {NAV.map(item => {
+        {visibleNav.map(item => {
           const active = isActive(item.path)
           const isCenter = item.label === 'Scan'
           return (
@@ -93,7 +117,7 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
                 </div>
               ) : (
                 <>
-                  <span style={{ fontSize: '20px', opacity: active ? 1 : 0.60 }}>{item.icon}</span>
+                  <span style={{ fontSize: '20px', opacity: active ? 1 : 0.6 }}>{item.icon}</span>
                   <span style={{ fontSize: '10px', fontWeight: active ? '600' : '400', color: active ? primary : '#999' }}>
                     {item.label}
                   </span>
