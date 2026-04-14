@@ -521,7 +521,7 @@ export default function DashboardClient({ profile, userId, totalScans, totalCont
 
       <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', backgroundColor: 'white', borderTop: '1px solid #eee', display: 'flex', zIndex: 100, paddingBottom: 'env(safe-area-inset-bottom)' }}>
         {[
-          { label: 'Home', icon: '🏠', action: () => setActiveTab('home'), active: activeTab === 'home' },
+          { label: 'Home', icon: '🏠', action: () => router.push('/dashboard'), active: activeTab === 'home' },
           { label: 'Contacts', icon: '📇', action: () => router.push('/contacts'), active: false },
           { label: 'Scan', icon: '📷', action: () => router.push('/scan'), active: false, center: true },
           { label: 'Events', icon: '🏪', action: () => router.push('/events'), active: false },
