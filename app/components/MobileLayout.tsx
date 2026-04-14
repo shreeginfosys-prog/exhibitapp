@@ -22,7 +22,6 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
     <div style={{
       maxWidth: '480px',
       margin: '0 auto',
-      minHeight: '100vh',
       minHeight: '100dvh',
       backgroundColor: '#f5f5f5',
       fontFamily: "'DM Sans', sans-serif",
