@@ -93,7 +93,7 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
                 </div>
               ) : (
                 <>
-                  <span style={{ fontSize: '20px', opacity: active ? 1 : 0.35 }}>{item.icon}</span>
+                  <span style={{ fontSize: '20px', opacity: active ? 1 : 0.60 }}>{item.icon}</span>
                   <span style={{ fontSize: '10px', fontWeight: active ? '600' : '400', color: active ? primary : '#999' }}>
                     {item.label}
                   </span>

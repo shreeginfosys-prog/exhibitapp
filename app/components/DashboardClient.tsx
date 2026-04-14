@@ -430,7 +430,7 @@ export default function DashboardClient({ profile, userId, totalScans, totalCont
   }
 
   return (
-    <div style={{ fontFamily: "'DM Sans', sans-serif", maxWidth: '480px', margin: '0 auto', backgroundColor: '#f5f5f5', minHeight: '100vh', paddingBottom: '68px' }}>
+    <div style={{ fontFamily: "'DM Sans', sans-serif", maxWidth: '480px', margin: '0 auto', backgroundColor: '#f5f5f5', minHeight: '100dvh', paddingBottom: '64px' }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Fraunces:wght@600;700&display=swap');`}</style>
 
       <div style={{ background: primary, padding: '16px 20px 20px' }}>
@@ -519,21 +519,26 @@ export default function DashboardClient({ profile, userId, totalScans, totalCont
         )}
       </div>
 
-      <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', backgroundColor: 'white', borderTop: '1px solid #eee', display: 'flex', zIndex: 100, padding: '8px 0 12px' }}>
+      <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', backgroundColor: 'white', borderTop: '1px solid #eee', display: 'flex', zIndex: 100, paddingBottom: 'env(safe-area-inset-bottom)' }}>
         {[
           { label: 'Home', icon: '🏠', action: () => setActiveTab('home'), active: activeTab === 'home' },
           { label: 'Contacts', icon: '📇', action: () => router.push('/contacts'), active: false },
+          { label: 'Scan', icon: '📷', action: () => router.push('/scan'), active: false, center: true },
           { label: 'Events', icon: '🏪', action: () => router.push('/events'), active: false },
-          { label: 'Follow-ups', icon: '🔔', action: () => router.push('/followups'), active: false },
-          { label: 'Add', icon: '📷', action: () => setActiveTab('add'), active: activeTab === 'add' },
           { label: 'Settings', icon: '⚙️', action: () => setActiveTab('settings'), active: activeTab === 'settings' },
-        ].map((item, i) => (
-          <button key={i} onClick={item.action} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', padding: '4px 0' }}>
-            <span style={{ fontSize: '18px', opacity: item.active ? 1 : 0.4 }}>{item.icon}</span>
-            <span style={{ fontSize: '10px', fontWeight: '500', color: item.active ? primary : '#999' }}>{item.label}</span>
+        ].map((item: any, i) => (
+          <button key={i} onClick={item.action} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', padding: item.center ? '0' : '8px 0 10px', position: 'relative' }}>
+            {item.center ? (
+              <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', marginTop: '-20px', boxShadow: '0 4px 12px rgba(15,110,86,0.4)', border: '3px solid white' }}>
+                {item.icon}
+              </div>
+            ) : (
+              <>
+                <span style={{ fontSize: '20px', opacity: item.active ? 1 : 0.6 }}>{item.icon}</span>
+                <span style={{ fontSize: '10px', fontWeight: item.active ? '600' : '400', color: item.active ? primary : '#999' }}>{item.label}</span>
+                {item.active && <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: '20px', height: '2px', backgroundColor: primary, borderRadius: '1px' }} />}
+              </>
+            )}
           </button>
         ))}
       </div>
-    </div>
-  )
-}
