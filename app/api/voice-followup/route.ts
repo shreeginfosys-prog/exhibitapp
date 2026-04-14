@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const getOpenAI = () => new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'placeholder' })
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, transcript: transcriptText })
     }
     try {
-      const transcript = await openai.audio.transcriptions.create({
+      const transcript = await getOpenAI().audio.transcriptions.create({
         file: audioFile,
         model: 'whisper-1',
       })
