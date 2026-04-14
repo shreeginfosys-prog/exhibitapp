@@ -34,14 +34,41 @@ export async function GET(request: Request) {
           .single()
 
         if (!profile) {
-          await supabase.from('users').insert({
-            id: user.id,
-            email: user.email,
-            name: user.user_metadata?.full_name || '',
-            photo: user.user_metadata?.avatar_url || '',
-          })
-          return NextResponse.redirect(`${origin}/profile`)
-        }
+  // Check if this is an invited sub-user
+  const ownerId = requestUrl.searchParams.get('owner')
+  const inviteType = requestUrl.searchParams.get('type')
+
+  if (inviteType === 'invite' && ownerId) {
+    // Create sub-user profile linked to owner
+    await supabase.from('users').insert({
+      id: user.id,
+      email: user.email,
+      name: user.user_metadata?.full_name || user.email?.split('@')[0] || '',
+      photo: user.user_metadata?.avatar_url || '',
+      account_type: 'member',
+      parent_user_id: ownerId,
+      onboarding_complete: true
+    })
+
+    // Link team_member record with this user's ID
+    await supabase
+      .from('team_members')
+      .update({ member_user_id: user.id, status: 'active' })
+      .eq('owner_id', ownerId)
+      .eq('member_email', user.email?.toLowerCase())
+
+    return NextResponse.redirect(`${origin}/dashboard`)
+  }
+
+  // Normal new user
+  await supabase.from('users').insert({
+    id: user.id,
+    email: user.email,
+    name: user.user_metadata?.full_name || '',
+    photo: user.user_metadata?.avatar_url || '',
+  })
+  return NextResponse.redirect(`${origin}/profile`)
+}
 
         if (!profile.onboarding_complete) {
           return NextResponse.redirect(`${origin}/profile`)

@@ -24,13 +24,38 @@ export default function ContactsPage() {
   const fetchData = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { window.location.href = '/login'; return }
-    const { data: profile } = await supabase.from('users').select('type, whatsapp_template').eq('id', user.id).single()
-    if (profile && profile.whatsapp_template) setTemplate(profile.whatsapp_template)
+
+    const { data: profile } = await supabase
+      .from('users')
+      .select('account_type, parent_user_id, whatsapp_template')
+      .eq('id', user.id)
+      .single()
+
+    if (profile?.whatsapp_template) setTemplate(profile.whatsapp_template)
+
+    // Owner sees all team leads, sub-user sees only own
+    let scannerIds = [user.id]
+    const isOwner = !profile?.parent_user_id
+
+    if (isOwner) {
+      const { data: teamMembers } = await supabase
+        .from('team_members')
+        .select('member_user_id')
+        .eq('owner_id', user.id)
+        .eq('status', 'active')
+        .not('member_user_id', 'is', null)
+
+      if (teamMembers?.length) {
+        scannerIds = [user.id, ...teamMembers.map((m: any) => m.member_user_id)]
+      }
+    }
+
     const { data } = await supabase
       .from('scans')
       .select('*, contacts(*), events(name)')
-      .eq('scanner_id', user.id)
+      .in('scanner_id', scannerIds)
       .order('created_at', { ascending: false })
+
     setScans(data || [])
     setLoading(false)
   }
@@ -64,22 +89,19 @@ export default function ContactsPage() {
 
   const handleStatusChange = (scanId: string, newStatus: string, currentStatus: string) => {
     if (newStatus === currentStatus) return
-    if (newStatus === 'done') {
-      setDealModal(scanId)
-      return
-    }
+    if (newStatus === 'done') { setDealModal(scanId); return }
     setPendingStatus(prev => ({ ...prev, [scanId]: newStatus }))
     setStatusNote(prev => ({ ...prev, [scanId]: '' }))
   }
 
   const exportCSV = () => {
     const source = getFiltered()
-    const headers = ['Company','Industry','City','Mode','Event','Person','Phone','Email','Tag','Status','Note','Date']
+    const headers = ['Company','Industry','City','Mode','Event','Person','Phone','Email','Tag','Status','Note','Date','Scanned By']
     const rows: any[] = []
     source.forEach(scan => {
       if (scan.contacts && scan.contacts.length > 0) {
         scan.contacts.forEach((c: any) => {
-          rows.push([scan.company||'',scan.industry||'',scan.city||'',scan.mode||'seller',scan.events?.name||'',c.name||'',c.phone1||'',c.email||'',scan.tag||'',scan.lead_status||'new',scan.note||'',new Date(scan.created_at).toLocaleDateString('en-IN')])
+          rows.push([scan.company||'',scan.industry||'',scan.city||'',scan.mode||'seller',scan.events?.name||'',c.name||'',c.phone1||'',c.email||'',scan.tag||'',scan.lead_status||'new',scan.note||'',new Date(scan.created_at).toLocaleDateString('en-IN'),scan.scanned_by_name||''])
         })
       }
     })
@@ -126,14 +148,12 @@ export default function ContactsPage() {
   return (
     <MobileLayout>
 
-      {/* View card fullscreen */}
       {viewingCard && (
         <div onClick={()=>setViewingCard(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.85)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
           <img src={viewingCard} alt="card" style={{maxWidth:'100%',maxHeight:'90vh',borderRadius:'8px'}} />
         </div>
       )}
 
-      {/* Deal modal */}
       {dealModal && (
         <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:1999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
           <div style={{backgroundColor:'white',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'360px'}}>
@@ -212,7 +232,6 @@ export default function ContactsPage() {
           return (
             <div key={scan.id} style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',marginBottom:'10px',overflow:'hidden'}}>
 
-              {/* Card header — tap to expand */}
               <div style={{padding:'14px 16px',cursor:'pointer'}} onClick={()=>setExpandedScan(expandedScan===scan.id?null:scan.id)}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
                   <div style={{flex:1,minWidth:0}}>
@@ -223,7 +242,10 @@ export default function ContactsPage() {
                     </div>
                     {scan.events?.name && <div style={{fontSize:'11px',color:primary,marginBottom:'2px'}}>🏪 {scan.events.name}</div>}
                     {(scan.city||scan.state) && <div style={{fontSize:'12px',color:'#666'}}>📍 {[scan.city,scan.state].filter(Boolean).join(', ')}</div>}
-                    <div style={{fontSize:'11px',color:'#bbb',marginTop:'3px'}}>{new Date(scan.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</div>
+                    <div style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'3px',flexWrap:'wrap'}}>
+                      <div style={{fontSize:'11px',color:'#bbb'}}>{new Date(scan.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</div>
+                      {scan.scanned_by_name && <div style={{fontSize:'11px',color:'#bbb'}}>· by {scan.scanned_by_name}</div>}
+                    </div>
                   </div>
                   <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'6px',marginLeft:'10px',flexShrink:0}}>
                     {scan.image_url && (
@@ -234,7 +256,7 @@ export default function ContactsPage() {
                 </div>
               </div>
 
-              {/* FIX 4 — Status with mandatory note */}
+              {/* Status with mandatory note */}
               {isSeller && (
                 <div style={{padding:'0 16px 12px',borderTop:'1px solid #f9f9f9'}}>
                   <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
@@ -257,12 +279,12 @@ export default function ContactsPage() {
                   {hasPending && (
                     <div style={{marginTop:'10px',padding:'10px',backgroundColor:'#fffbf0',borderRadius:'8px',border:'1px solid #f5e6a3'}}>
                       <div style={{fontSize:'12px',color:'#666',marginBottom:'6px',fontWeight:'500'}}>
-                        Why are you changing to <span style={{color:statusConfig[hasPending]?.color||primary}}>{statusConfig[hasPending]?.label}</span>? <span style={{color:'#cc0000'}}>*</span>
+                        Why changing to <span style={{color:statusConfig[hasPending]?.color||primary}}>{statusConfig[hasPending]?.label}</span>? <span style={{color:'#cc0000'}}>*</span>
                       </div>
                       <textarea
                         value={statusNote[scan.id] || ''}
                         onChange={e => setStatusNote(prev => ({...prev, [scan.id]: e.target.value}))}
-                        placeholder="Add a note — e.g. Called today, they are interested in 500 units..."
+                        placeholder="e.g. Called today, interested in 500 units..."
                         autoFocus
                         style={{width:'100%',padding:'8px',borderRadius:'6px',border:'1px solid #ddd',fontSize:'12px',resize:'none',minHeight:'60px',fontFamily:'sans-serif',boxSizing:'border-box',outline:'none'}}
                       />
@@ -297,7 +319,6 @@ export default function ContactsPage() {
                 </div>
               )}
 
-              {/* FIX 5 — Phone + WhatsApp icons */}
               {expandedScan===scan.id && scan.contacts && scan.contacts.length>0 && (
                 <div style={{borderTop:'1px solid #f0f0f0',padding:'12px 16px'}}>
                   {scan.address && <div style={{fontSize:'12px',color:'#999',marginBottom:'8px'}}>📍 {scan.address}</div>}
@@ -307,27 +328,13 @@ export default function ContactsPage() {
                         {contact.name}
                         {contact.designation && <span style={{fontSize:'12px',color:'#666',fontWeight:'400'}}> · {contact.designation}</span>}
                       </div>
-
                       {[contact.phone1,contact.phone2,contact.phone3].filter(Boolean).map((ph:string,j:number)=>(
                         <div key={j} style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
                           <span style={{fontSize:'13px',color:'#333',flex:1}}>{ph}</span>
-                          <a
-                            href={'tel:'+ph}
-                            style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'50%',backgroundColor:'#EAF3DE',textDecoration:'none',fontSize:'16px',flexShrink:0}}
-                          >
-                            📞
-                          </a>
-                          <a
-                            href={'https://wa.me/91'+ph.replace(/\D/g,'')+'?text='+encodeURIComponent(template)}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'50%',backgroundColor:'#E7F7EE',textDecoration:'none',fontSize:'16px',flexShrink:0}}
-                          >
-                            💬
-                          </a>
+                          <a href={'tel:'+ph} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'50%',backgroundColor:'#EAF3DE',textDecoration:'none',fontSize:'16px',flexShrink:0}}>📞</a>
+                          <a href={'https://wa.me/91'+ph.replace(/\D/g,'')+'?text='+encodeURIComponent(template)} target="_blank" rel="noreferrer" style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'34px',height:'34px',borderRadius:'50%',backgroundColor:'#E7F7EE',textDecoration:'none',fontSize:'16px',flexShrink:0}}>💬</a>
                         </div>
                       ))}
-
                       {contact.email && (
                         <div style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'4px'}}>
                           <span style={{fontSize:'12px',color:'#444',flex:1}}>{contact.email}</span>

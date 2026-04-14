@@ -18,6 +18,7 @@ export default function TeamPage() {
   const [coupon, setCoupon] = useState('')
   const [couponError, setCouponError] = useState('')
   const [couponSuccess, setCouponSuccess] = useState(false)
+  const [inviting, setInviting] = useState(false)
   const primary = '#0F6E56'
   const VALID_COUPONS = ['EXHIBIT2026','BETA2026','VIPUL100']
 
@@ -66,18 +67,41 @@ export default function TeamPage() {
 
   const handleActivate = async () => {
     setCouponError('')
-    if (VALID_COUPONS.includes(coupon.trim().toUpperCase())) {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const paidUntil = new Date()
-      paidUntil.setMonth(paidUntil.getMonth() + 1)
-      await supabase.from('users').update({ enterprise_paid_until: paidUntil.toISOString() }).eq('id', user.id)
-      await supabase.from('team_members').update({ status: 'active' }).eq('owner_id', user.id)
-      setCouponSuccess(true)
-      setTimeout(() => { setPaymentModal(false); fetchData() }, 1500)
-    } else {
+    if (!VALID_COUPONS.includes(coupon.trim().toUpperCase())) {
       setCouponError('Invalid coupon code.')
+      return
     }
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    setInviting(true)
+
+    // Activate team in DB
+    const paidUntil = new Date()
+    paidUntil.setMonth(paidUntil.getMonth() + 1)
+    await supabase.from('users').update({ enterprise_paid_until: paidUntil.toISOString() }).eq('id', user.id)
+    await supabase.from('team_members').update({ status: 'active' }).eq('owner_id', user.id)
+
+    // Send email invites to all members
+    for (const member of members) {
+      try {
+        await fetch('/api/invite-member', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: member.member_email,
+            ownerId: user.id
+          })
+        })
+      } catch (e) {
+        console.error('Invite failed for:', member.member_email)
+      }
+    }
+
+    setCouponSuccess(true)
+    setInviting(false)
+    setTimeout(() => { setPaymentModal(false); fetchData() }, 2000)
   }
 
   if (loading) return (
@@ -96,33 +120,52 @@ export default function TeamPage() {
         <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
           <div style={{backgroundColor:'white',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'360px'}}>
             <div style={{fontSize:'18px',fontWeight:'500',color:'#111',marginBottom:'4px'}}>Activate Team</div>
-            <div style={{fontSize:'13px',color:'#666',marginBottom:'16px'}}>Send invites and activate all {members.length} team members</div>
+            <div style={{fontSize:'13px',color:'#666',marginBottom:'16px'}}>
+              Invite emails will be sent to all {members.length} team member{members.length > 1 ? 's' : ''}
+            </div>
 
             <div style={{backgroundColor:'#f9f9f9',borderRadius:'10px',padding:'14px',marginBottom:'16px'}}>
               {members.map(m => (
-                <div key={m.id} style={{fontSize:'13px',color:'#444',padding:'4px 0'}}>✉️ {m.member_email}</div>
+                <div key={m.id} style={{fontSize:'13px',color:'#444',padding:'4px 0',display:'flex',alignItems:'center',gap:'8px'}}>
+                  <span>✉️</span>
+                  <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.member_email}</span>
+                  <span style={{fontSize:'11px',flexShrink:0,color:m.status==='active'?'#27500A':m.status==='invited'?'#185FA5':'#999'}}>
+                    {m.status==='active'?'Active':m.status==='invited'?'Invited':'Pending'}
+                  </span>
+                </div>
               ))}
             </div>
 
-            <button disabled style={{width:'100%',padding:'12px',backgroundColor:'#f5f5f5',color:'#999',border:'none',borderRadius:'8px',fontSize:'14px',cursor:'not-allowed',marginBottom:'12px'}}>
+            <button disabled style={{width:'100%',padding:'12px',backgroundColor:'#f5f5f5',color:'#999',border:'none',borderRadius:'8px',fontSize:'14px',cursor:'not-allowed',marginBottom:'16px'}}>
               Pay {isEnterprise ? '₹5,000' : '₹2,000'} — Coming soon
             </button>
 
             <div style={{borderTop:'1px solid #eee',paddingTop:'12px'}}>
-              <div style={{fontSize:'13px',color:'#666',marginBottom:'8px'}}>Have a coupon code?</div>
+              <div style={{fontSize:'13px',color:'#666',marginBottom:'8px',fontWeight:'500'}}>Have a coupon code?</div>
               <input
                 value={coupon}
                 onChange={e=>{setCoupon(e.target.value);setCouponError('')}}
                 placeholder="Enter coupon code"
                 style={{width:'100%',padding:'10px 12px',borderRadius:'8px',border:'1px solid #ddd',fontSize:'14px',fontFamily:'sans-serif',boxSizing:'border-box',marginBottom:'8px',textTransform:'uppercase'}}
-                onKeyDown={e=>e.key==='Enter'&&handleActivate()}
+                onKeyDown={e=>e.key==='Enter'&&!inviting&&handleActivate()}
               />
               {couponError && <div style={{fontSize:'12px',color:'#cc0000',marginBottom:'8px'}}>{couponError}</div>}
-              {couponSuccess && <div style={{fontSize:'12px',color:primary,marginBottom:'8px',fontWeight:'500'}}>✓ Team activated! Invites sent.</div>}
-              <button onClick={handleActivate} style={{width:'100%',padding:'11px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:'pointer',marginBottom:'8px'}}>
-                Apply Coupon & Send Invites
+              {couponSuccess && (
+                <div style={{fontSize:'12px',color:primary,marginBottom:'8px',fontWeight:'500'}}>
+                  ✓ Team activated! Invite emails sent.
+                </div>
+              )}
+              <button
+                onClick={handleActivate}
+                disabled={inviting}
+                style={{width:'100%',padding:'11px',backgroundColor:inviting?'#999':primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:inviting?'not-allowed':'pointer',marginBottom:'8px'}}
+              >
+                {inviting ? 'Sending invites...' : 'Apply Coupon & Send Invites'}
               </button>
-              <button onClick={()=>setPaymentModal(false)} style={{width:'100%',padding:'10px',backgroundColor:'white',color:'#666',border:'1px solid #eee',borderRadius:'8px',fontSize:'13px',cursor:'pointer'}}>
+              <button
+                onClick={()=>setPaymentModal(false)}
+                style={{width:'100%',padding:'10px',backgroundColor:'white',color:'#666',border:'1px solid #eee',borderRadius:'8px',fontSize:'13px',cursor:'pointer'}}
+              >
                 Cancel
               </button>
             </div>
@@ -141,12 +184,10 @@ export default function TeamPage() {
         {/* Plan info */}
         <div style={{backgroundColor:'#EAF3DE',border:'1px solid #C0DD97',borderRadius:'12px',padding:'14px',marginBottom:'16px'}}>
           <div style={{fontSize:'13px',color:'#27500A'}}>
-            {isEnterprise
-              ? '🏢 Enterprise — up to 5 team members'
-              : '🏪 Exhibitor — up to 2 team members'}
+            {isEnterprise ? '🏢 Enterprise — up to 5 team members' : '🏪 Exhibitor — up to 2 team members'}
           </div>
           <div style={{fontSize:'12px',color:'#3B6D11',marginTop:'4px'}}>
-            Each member scans under your account. Their leads appear in your dashboard.
+            Each member gets their own login. They scan independently. Owner sees all leads.
           </div>
         </div>
 
@@ -175,15 +216,15 @@ export default function TeamPage() {
             <div style={{padding:'12px 16px',borderBottom:'1px solid #f0f0f0',fontSize:'13px',fontWeight:'500',color:'#111'}}>
               Team members
             </div>
-            {members.map((member,i) => (
+            {members.map((member, i) => (
               <div key={member.id} style={{display:'flex',alignItems:'center',gap:'10px',padding:'12px 16px',borderBottom:i<members.length-1?'1px solid #f5f5f5':'none'}}>
                 <div style={{width:'36px',height:'36px',borderRadius:'50%',backgroundColor:'#E6F1FB',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'14px',color:'#0C447C',fontWeight:'500',flexShrink:0}}>
                   {member.member_email[0].toUpperCase()}
                 </div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:'13px',color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{member.member_email}</div>
-                  <div style={{fontSize:'11px',color:member.status==='active'?'#27500A':'#999',marginTop:'1px'}}>
-                    {member.status==='active' ? '● Active' : member.status==='invited' ? 'Invite sent' : 'Pending activation'}
+                  <div style={{fontSize:'11px',marginTop:'1px',color:member.status==='active'?'#27500A':member.status==='invited'?'#185FA5':'#999'}}>
+                    {member.status==='active' ? '● Active' : member.status==='invited' ? '📧 Invite sent' : '⏳ Pending activation'}
                   </div>
                 </div>
                 <button onClick={()=>handleRemove(member.id)} style={{padding:'5px 10px',backgroundColor:'#fff0f0',color:'#cc0000',border:'1px solid #ffcccc',borderRadius:'6px',fontSize:'11px',cursor:'pointer',flexShrink:0}}>
