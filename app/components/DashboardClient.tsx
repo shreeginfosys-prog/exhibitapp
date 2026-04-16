@@ -524,8 +524,8 @@ export default function DashboardClient({ profile, userId, totalScans, totalCont
           { label: 'Home', icon: '🏠', action: () => router.push('/dashboard'), active: activeTab === 'home' },
           { label: 'Contacts', icon: '📇', action: () => router.push('/contacts'), active: false },
           { label: 'Scan', icon: '📷', action: () => router.push('/scan'), active: false, center: true },
+          { label: 'Follow-ups', icon: '🔔', action: () => router.push('/followups'), active: false },
           { label: 'Events', icon: '🏪', action: () => router.push('/events'), active: false },
-          { label: 'Settings', icon: '⚙️', action: () => setActiveTab('settings'), active: activeTab === 'settings' },
         ].map((item: any, i) => (
           <button key={i} onClick={item.action} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', padding: item.center ? '0' : '8px 0 10px', position: 'relative' }}>
             {item.center ? (
