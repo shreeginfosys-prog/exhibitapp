@@ -31,12 +31,14 @@ export default function ContactsPage() {
   const [template, setTemplate] = useState('Hi, great meeting you at the exhibition! Looking forward to staying in touch.')
   const [expandedScan, setExpandedScan] = useState<string | null>(null)
   const [viewingCard, setViewingCard] = useState<string | null>(null)
-  const [dealModal, setDealModal] = useState<string | null>(null)
-  const [dealValue, setDealValue] = useState('')
-  const [statusNote, setStatusNote] = useState<Record<string, string>>({})
-  const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({})
   const [journeyMap, setJourneyMap] = useState<Record<string, any[]>>({})
   const [journeyLoading, setJourneyLoading] = useState<string | null>(null)
+
+  // Status change state — inline, no popup
+  const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({})
+  const [statusNote, setStatusNote] = useState<Record<string, string>>({})
+  const [followupDate, setFollowupDate] = useState<Record<string, string>>({})
+  const [dealValueState, setDealValueState] = useState<Record<string, string>>({})
 
   useEffect(() => { fetchData() }, [])
 
@@ -53,7 +55,6 @@ export default function ContactsPage() {
 
     if (profile?.whatsapp_template) setTemplate(profile.whatsapp_template)
 
-    // Owner sees all team leads, sub-user sees only own
     let scannerIds = [userId]
     const isOwner = !profile?.parent_user_id
 
@@ -93,45 +94,75 @@ export default function ContactsPage() {
   }
 
   const handleExpand = (scanId: string) => {
-    const newExpanded = expandedScan === scanId ? null : scanId
-    setExpandedScan(newExpanded)
-    if (newExpanded) loadJourney(newExpanded)
+    const next = expandedScan === scanId ? null : scanId
+    setExpandedScan(next)
+    if (next) loadJourney(next)
   }
 
-  const updateLeadStatus = async (scanId: string, status: string, value?: number, note?: string) => {
+  const handleStatusSelect = (scanId: string, newStatus: string, currentStatus: string) => {
+    if (newStatus === currentStatus) return
+    setPendingStatus(prev => ({ ...prev, [scanId]: newStatus }))
+    setStatusNote(prev => ({ ...prev, [scanId]: '' }))
+    setFollowupDate(prev => ({ ...prev, [scanId]: '' }))
+    setDealValueState(prev => ({ ...prev, [scanId]: '' }))
+  }
+
+  const cancelStatusChange = (scanId: string) => {
+    setPendingStatus(prev => { const n={...prev}; delete n[scanId]; return n })
+    setStatusNote(prev => { const n={...prev}; delete n[scanId]; return n })
+    setFollowupDate(prev => { const n={...prev}; delete n[scanId]; return n })
+    setDealValueState(prev => { const n={...prev}; delete n[scanId]; return n })
+  }
+
+  const saveStatusChange = async (scan: any) => {
+    const scanId = scan.id
+    const note = statusNote[scanId]?.trim()
+    const newStatus = pendingStatus[scanId]
+    const fDate = followupDate[scanId]
+    const dVal = dealValueState[scanId]
+
+    if (!note) { alert('Note is required — tell yourself why you made this change'); return }
+
     const { data: { session } } = await supabase.auth.getSession()
     if (!session?.user) return
     const { data: profile } = await supabase.from('users').select('name').eq('id', session.user.id).single()
     const userName = profile?.name || 'Unknown'
 
-    const update: any = { lead_status: status }
-    if (value !== undefined) update.deal_value = value
+    // Update scan status
+    const update: any = { lead_status: newStatus }
+    if (newStatus === 'done' && dVal) update.deal_value = Number(dVal)
     await supabase.from('scans').update(update).eq('id', scanId)
 
+    // Log activity
     await supabase.from('lead_activity').insert({
       scan_id: scanId,
       user_id: session.user.id,
       user_name: userName,
-      action: status === 'done' ? 'deal_done' : 'status_changed',
-      new_value: status === 'done' ? String(value || 0) : status,
-      note: note || ''
+      action: newStatus === 'done' ? 'deal_done' : 'status_changed',
+      new_value: newStatus === 'done' ? String(dVal || 0) : newStatus,
+      note
     })
 
+    // Create follow-up if date was set
+    if (fDate) {
+      const firstContact = scan.contacts?.[0]
+      await supabase.from('follow_ups').insert({
+        scan_id: scanId,
+        user_id: session.user.id,
+        contact_name: firstContact?.name || '',
+        company: scan.company || '',
+        action: note,
+        due_date: fDate,
+        note,
+        status: 'pending'
+      })
+    }
+
+    // Update local state
     setScans(prev => prev.map(s => s.id === scanId ? { ...s, ...update } : s))
-    // Refresh journey
     setJourneyMap(prev => { const n = {...prev}; delete n[scanId]; return n })
     loadJourney(scanId)
-    setDealModal(null)
-    setDealValue('')
-    setPendingStatus(prev => { const n = {...prev}; delete n[scanId]; return n })
-    setStatusNote(prev => { const n = {...prev}; delete n[scanId]; return n })
-  }
-
-  const handleStatusChange = (scanId: string, newStatus: string, currentStatus: string) => {
-    if (newStatus === currentStatus) return
-    if (newStatus === 'done') { setDealModal(scanId); return }
-    setPendingStatus(prev => ({ ...prev, [scanId]: newStatus }))
-    setStatusNote(prev => ({ ...prev, [scanId]: '' }))
+    cancelStatusChange(scanId)
   }
 
   const exportCSV = () => {
@@ -185,43 +216,17 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {dealModal && (
-        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.5)',zIndex:1999,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
-          <div style={{backgroundColor:'white',borderRadius:'16px',padding:'24px',width:'100%',maxWidth:'360px'}}>
-            <div style={{fontSize:'16px',fontWeight:'600',color:'#111',marginBottom:'8px'}}>🎉 Deal Done!</div>
-            <div style={{fontSize:'13px',color:'#666',marginBottom:'16px'}}>Enter the deal value (optional)</div>
-            <input
-              value={dealValue}
-              onChange={e=>setDealValue(e.target.value)}
-              placeholder="Deal value in ₹ e.g. 50000"
-              type="number"
-              style={{...inputBase, marginBottom:'12px'}}
-            />
-            <div style={{display:'flex',gap:'8px'}}>
-              <button onClick={()=>updateLeadStatus(dealModal,'done',Number(dealValue)||0)} style={{flex:1,padding:'12px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'600',cursor:'pointer'}}>Save Deal</button>
-              <button onClick={()=>{setDealModal(null);setDealValue('')}} style={{padding:'12px 16px',backgroundColor:'#f5f5f5',color:'#666',border:'none',borderRadius:'8px',fontSize:'14px',cursor:'pointer'}}>Skip</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div style={{backgroundColor:primary,padding:'16px 20px 14px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}}>
           <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif"}}>My Contacts</div>
-          <button onClick={exportCSV} style={{padding:'6px 12px',backgroundColor:'rgba(255,255,255,0.15)',color:'white',border:'none',borderRadius:'6px',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}>
-            Export CSV
-          </button>
+          <button onClick={exportCSV} style={{padding:'6px 12px',backgroundColor:'rgba(255,255,255,0.15)',color:'white',border:'none',borderRadius:'6px',fontSize:'12px',cursor:'pointer',fontWeight:'500'}}>Export CSV</button>
         </div>
-
         <div style={{display:'flex',backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'20px',padding:'2px',marginBottom:'12px',width:'fit-content'}}>
           {['seller','buyer'].map(m => (
-            <button key={m} onClick={()=>{setModeFilter(m);setActiveFilter('All')}} style={{padding:'5px 16px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:modeFilter===m?'white':'transparent',color:modeFilter===m?primary:'rgba(255,255,255,0.8)',textTransform:'capitalize'}}>
-              {m}
-            </button>
+            <button key={m} onClick={()=>{setModeFilter(m);setActiveFilter('All')}} style={{padding:'5px 16px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:modeFilter===m?'white':'transparent',color:modeFilter===m?primary:'rgba(255,255,255,0.8)',textTransform:'capitalize'}}>{m}</button>
           ))}
         </div>
-
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
           <div style={{backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'8px',padding:'10px',textAlign:'center'}}>
             <div style={{fontSize:'20px',fontWeight:'600',color:'white'}}>{filtered.length}</div>
@@ -252,7 +257,7 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      {/* List */}
+      {/* Contact list */}
       <div style={{padding:'8px 16px 24px'}}>
         {filtered.length === 0 && (
           <div style={{textAlign:'center',padding:'40px 20px',color:'#999'}}>
@@ -270,7 +275,7 @@ export default function ContactsPage() {
           return (
             <div key={scan.id} style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',marginBottom:'10px',overflow:'hidden'}}>
 
-              {/* Card header */}
+              {/* Card header — tap to expand */}
               <div style={{padding:'14px 16px',cursor:'pointer'}} onClick={()=>handleExpand(scan.id)}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
                   <div style={{flex:1,minWidth:0}}>
@@ -295,61 +300,84 @@ export default function ContactsPage() {
                 </div>
               </div>
 
-              {/* Status selector — always visible for seller */}
+              {/* Status row — always visible for seller */}
               {isSeller && (
                 <div style={{padding:'0 16px 12px'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
-                    <select
-                      value={hasPending || status}
-                      onChange={(e) => handleStatusChange(scan.id, e.target.value, status)}
-                      style={{
-                        padding:'6px 10px',borderRadius:'8px',
-                        border:'1.5px solid '+(hasPending?statusConfig[hasPending]?.color||'#D1FAE5':statusInfo.color),
-                        backgroundColor:hasPending?statusConfig[hasPending]?.bg||'#f9f9f9':statusInfo.bg,
-                        color:hasPending?statusConfig[hasPending]?.color||'#666':statusInfo.color,
-                        fontSize:'12px',fontWeight:'600',cursor:'pointer',outline:'none',
-                        fontFamily:"'DM Sans', sans-serif"
-                      }}
-                    >
-                      <option value="new">New</option>
-                      <option value="contacted">Contacted</option>
-                      <option value="interested">Interested</option>
-                      <option value="done">Deal Done</option>
-                      <option value="lost">Not Now</option>
-                    </select>
+
+                  {/* Status pills */}
+                  <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom: hasPending ? '10px' : '0'}}>
+                    {Object.entries(statusConfig).map(([key, cfg]) => (
+                      <button
+                        key={key}
+                        onClick={() => handleStatusSelect(scan.id, key, status)}
+                        style={{
+                          padding:'5px 12px',borderRadius:'20px',fontSize:'11px',fontWeight:'600',cursor:'pointer',
+                          border: (hasPending||status)===key ? '2px solid '+cfg.color : '1.5px solid #eee',
+                          backgroundColor: (hasPending||status)===key ? cfg.bg : 'white',
+                          color: (hasPending||status)===key ? cfg.color : '#bbb',
+                        }}
+                      >
+                        {(hasPending ? hasPending : status)===key ? '● ' : ''}{cfg.label}
+                      </button>
+                    ))}
                     {status==='done' && scan.deal_value>0 && (
-                      <span style={{fontSize:'12px',color:'#27500A',fontWeight:'600'}}>₹{Number(scan.deal_value).toLocaleString('en-IN')}</span>
+                      <span style={{fontSize:'12px',color:'#27500A',fontWeight:'600',alignSelf:'center'}}>₹{Number(scan.deal_value).toLocaleString('en-IN')}</span>
                     )}
                   </div>
 
-                  {/* Mandatory note when changing status */}
+                  {/* Inline note + followup date when status changed */}
                   {hasPending && (
-                    <div style={{marginTop:'10px',padding:'12px',backgroundColor:'#fffbf0',borderRadius:'10px',border:'1.5px solid #f5e6a3'}}>
-                      <div style={{fontSize:'12px',color:'#666',marginBottom:'8px',fontWeight:'600'}}>
-                        Why changing to <span style={{color:statusConfig[hasPending]?.color||primary}}>{statusConfig[hasPending]?.label}</span>? <span style={{color:'#E53E3E'}}>*</span>
+                    <div style={{backgroundColor:'#fffbf0',borderRadius:'10px',border:'1.5px solid #f5e6a3',padding:'12px'}}>
+                      <div style={{fontSize:'12px',color:'#666',marginBottom:'6px',fontWeight:'600'}}>
+                        Changing to <span style={{color:statusConfig[hasPending]?.color}}>{statusConfig[hasPending]?.label}</span>
                       </div>
-                      <textarea
-                        value={statusNote[scan.id] || ''}
-                        onChange={e => setStatusNote(prev => ({...prev, [scan.id]: e.target.value}))}
-                        placeholder="Add a note — this helps you remember the conversation later..."
-                        autoFocus
-                        style={{width:'100%',padding:'9px',borderRadius:'8px',border:'1.5px solid #D1FAE5',fontSize:'12px',resize:'none',minHeight:'65px',fontFamily:"'DM Sans', sans-serif",boxSizing:'border-box',outline:'none',backgroundColor:'white'}}
-                      />
-                      <div style={{display:'flex',gap:'6px',marginTop:'8px'}}>
+
+                      {/* Deal value for done */}
+                      {hasPending === 'done' && (
+                        <div style={{marginBottom:'8px'}}>
+                          <label style={{fontSize:'11px',color:'#999',fontWeight:'600',display:'block',marginBottom:'4px',textTransform:'uppercase'}}>Deal Value (₹)</label>
+                          <input
+                            type="number"
+                            value={dealValueState[scan.id]||''}
+                            onChange={e => setDealValueState(prev=>({...prev,[scan.id]:e.target.value}))}
+                            placeholder="e.g. 50000"
+                            style={{...inputBase,marginBottom:'0'}}
+                          />
+                        </div>
+                      )}
+
+                      {/* Mandatory note */}
+                      <div style={{marginBottom:'8px'}}>
+                        <label style={{fontSize:'11px',color:'#E53E3E',fontWeight:'600',display:'block',marginBottom:'4px',textTransform:'uppercase'}}>Note (required) *</label>
+                        <textarea
+                          value={statusNote[scan.id]||''}
+                          onChange={e => setStatusNote(prev=>({...prev,[scan.id]:e.target.value}))}
+                          placeholder="What happened? e.g. Called today, interested in 500 units, needs catalogue..."
+                          style={{width:'100%',padding:'9px',borderRadius:'8px',border:'1.5px solid #D1FAE5',fontSize:'12px',resize:'none',minHeight:'60px',fontFamily:"'DM Sans', sans-serif",boxSizing:'border-box',outline:'none',backgroundColor:'white'}}
+                        />
+                      </div>
+
+                      {/* Follow-up date — optional */}
+                      <div style={{marginBottom:'10px'}}>
+                        <label style={{fontSize:'11px',color:'#999',fontWeight:'600',display:'block',marginBottom:'4px',textTransform:'uppercase'}}>Set Follow-up Date (optional)</label>
+                        <input
+                          type="date"
+                          value={followupDate[scan.id]||''}
+                          onChange={e => setFollowupDate(prev=>({...prev,[scan.id]:e.target.value}))}
+                          min={new Date().toISOString().split('T')[0]}
+                          style={{...inputBase}}
+                        />
+                      </div>
+
+                      <div style={{display:'flex',gap:'6px'}}>
                         <button
-                          onClick={() => {
-                            if (!statusNote[scan.id]?.trim()) { alert('Please add a note before saving'); return }
-                            updateLeadStatus(scan.id, hasPending, undefined, statusNote[scan.id])
-                          }}
+                          onClick={() => saveStatusChange(scan)}
                           style={{flex:1,padding:'9px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'600',cursor:'pointer'}}
                         >
-                          Save
+                          {followupDate[scan.id] ? 'Save + Set Follow-up' : 'Save'}
                         </button>
                         <button
-                          onClick={() => {
-                            setPendingStatus(prev => { const n={...prev}; delete n[scan.id]; return n })
-                            setStatusNote(prev => { const n={...prev}; delete n[scan.id]; return n })
-                          }}
+                          onClick={() => cancelStatusChange(scan.id)}
                           style={{padding:'9px 14px',backgroundColor:'#f5f5f5',color:'#666',border:'none',borderRadius:'8px',fontSize:'12px',cursor:'pointer'}}
                         >
                           Cancel
@@ -399,7 +427,7 @@ export default function ContactsPage() {
                     </div>
                   )}
 
-                  {/* Lead Journey + Notes Journey */}
+                  {/* Lead Journey */}
                   <div style={{padding:'12px 16px',borderTop:'1px solid #f5f5f5'}}>
                     <div style={{fontSize:'12px',fontWeight:'700',color:'#111',marginBottom:'12px',textTransform:'uppercase',letterSpacing:'0.05em'}}>
                       📋 Lead Journey
@@ -410,7 +438,6 @@ export default function ContactsPage() {
                       <div style={{fontSize:'12px',color:'#bbb'}}>No activity yet</div>
                     ) : (
                       <div style={{position:'relative'}}>
-                        {/* Timeline line */}
                         <div style={{position:'absolute',left:'12px',top:'8px',bottom:'8px',width:'2px',backgroundColor:'#e8e8e8'}} />
                         {journey.map((activity: any, idx: number) => {
                           const actionIcons: Record<string,string> = {
@@ -418,19 +445,17 @@ export default function ContactsPage() {
                           }
                           const icon = actionIcons[activity.action] || '📌'
                           const newVal = activity.new_value
-                          const statusLabel = statusConfig[newVal]?.label || newVal
-                          const statusColor = statusConfig[newVal]?.color || '#666'
 
                           return (
-                            <div key={activity.id || idx} style={{display:'flex',gap:'12px',marginBottom:'14px',position:'relative'}}>
+                            <div key={activity.id||idx} style={{display:'flex',gap:'12px',marginBottom:'14px',position:'relative'}}>
                               <div style={{width:'26px',height:'26px',borderRadius:'50%',backgroundColor:'white',border:'2px solid #e8e8e8',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',flexShrink:0,zIndex:1}}>
                                 {icon}
                               </div>
                               <div style={{flex:1,paddingTop:'3px'}}>
                                 <div style={{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap',marginBottom:'3px'}}>
-                                  <span style={{fontSize:'12px',fontWeight:'600',color:'#111'}}>{activity.user_name || 'Unknown'}</span>
+                                  <span style={{fontSize:'12px',fontWeight:'600',color:'#111'}}>{activity.user_name||'Unknown'}</span>
                                   {activity.action==='status_changed' && (
-                                    <span style={{fontSize:'11px',padding:'1px 7px',borderRadius:'10px',backgroundColor:statusConfig[newVal]?.bg||'#f0f0f0',color:statusColor,fontWeight:'600'}}>→ {statusLabel}</span>
+                                    <span style={{fontSize:'11px',padding:'1px 7px',borderRadius:'10px',backgroundColor:statusConfig[newVal]?.bg||'#f0f0f0',color:statusConfig[newVal]?.color||'#666',fontWeight:'600'}}>→ {statusConfig[newVal]?.label||newVal}</span>
                                   )}
                                   {activity.action==='deal_done' && (
                                     <span style={{fontSize:'11px',padding:'1px 7px',borderRadius:'10px',backgroundColor:'#EAF3DE',color:'#27500A',fontWeight:'600'}}>💰 ₹{Number(newVal).toLocaleString('en-IN')}</span>

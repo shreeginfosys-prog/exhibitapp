@@ -1,10 +1,42 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { createClient } from '../../lib/supabase'
 import { useSearchParams } from 'next/navigation'
 import MicButton from '../components/MicButton'
 import MobileLayout from '../components/MobileLayout'
+
+const primary = '#0F6E56'
+
+const inputStyle: React.CSSProperties = {
+  width:'100%', padding:'9px 10px', borderRadius:'8px',
+  border:'1.5px solid #D1FAE5', fontSize:'13px',
+  fontFamily:"'DM Sans', sans-serif", boxSizing:'border-box',
+  backgroundColor:'white', color:'#111', outline:'none'
+}
+
+const labelStyle: React.CSSProperties = {
+  fontSize:'11px', color:'#4A5568', fontWeight:'600',
+  marginBottom:'4px', display:'block',
+  textTransform:'uppercase', letterSpacing:'0.04em'
+}
+
+// Field outside component to prevent re-creation on every render (fixes keyboard hiding)
+const Field = ({ label, value, onChange, placeholder, type='text' }: {
+  label: string, value: string, onChange: (v:string)=>void, placeholder: string, type?: string
+}) => (
+  <div style={{marginBottom:'10px'}}>
+    <label style={labelStyle}>{label}</label>
+    <input
+      type={type}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      autoComplete="off"
+      style={inputStyle}
+    />
+  </div>
+)
 
 export default function ScanPageContent() {
   const supabase = createClient()
@@ -28,7 +60,6 @@ export default function ScanPageContent() {
   const [tag, setTag] = useState('')
   const [note, setNote] = useState('')
 
-  // Editable fields
   const [company, setCompany] = useState('')
   const [industry, setIndustry] = useState('')
   const [city, setCity] = useState('')
@@ -46,7 +77,6 @@ export default function ScanPageContent() {
 
   const fileInputFront = useRef<HTMLInputElement>(null)
   const fileInputBack = useRef<HTMLInputElement>(null)
-  const primary = '#0F6E56'
 
   useEffect(() => {
     const load = async () => {
@@ -54,18 +84,18 @@ export default function ScanPageContent() {
         const { data: event } = await supabase.from('events').select('name').eq('id', eventId).single()
         if (event) setEventName(event.name)
       }
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        const { data: profile } = await supabase.from('users').select('whatsapp_template').eq('id', user.id).single()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        const { data: profile } = await supabase.from('users').select('whatsapp_template').eq('id', session.user.id).single()
         if (profile?.whatsapp_template) setWhatsappTemplate(profile.whatsapp_template)
       }
     }
     load()
   }, [])
 
-  const updatePerson = (index: number, field: string, value: string) => {
+  const updatePerson = useCallback((index: number, field: string, value: string) => {
     setPeople(prev => prev.map((p, i) => i === index ? { ...p, [field]: value } : p))
-  }
+  }, [])
 
   const compress = (dataUrl: string): Promise<string> => new Promise((resolve) => {
     const img = new Image()
@@ -99,22 +129,18 @@ export default function ScanPageContent() {
   const handleFrontChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setError(null)
-    setScanned(false)
-
+    setError(null); setScanned(false)
     const dataUrl = await new Promise<string>((resolve) => {
       const r = new FileReader()
       r.onload = (ev) => resolve(ev.target?.result as string)
       r.readAsDataURL(file)
     })
     setPreviewFront(dataUrl)
-
-    // Upload front
     setUploading('front')
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setError('Not logged in'); return }
-      const url = await uploadImage(dataUrl, user.id)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) { setError('Not logged in'); return }
+      const url = await uploadImage(dataUrl, session.user.id)
       setUploadedFrontUrl(url)
     } catch (e: any) {
       setError('Upload failed: ' + e.message)
@@ -127,20 +153,17 @@ export default function ScanPageContent() {
     const file = e.target.files?.[0]
     if (!file) return
     setError(null)
-
     const dataUrl = await new Promise<string>((resolve) => {
       const r = new FileReader()
       r.onload = (ev) => resolve(ev.target?.result as string)
       r.readAsDataURL(file)
     })
     setPreviewBack(dataUrl)
-
-    // Upload back
     setUploading('back')
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const url = await uploadImage(dataUrl, user.id)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) return
+      const url = await uploadImage(dataUrl, session.user.id)
       setUploadedBackUrl(url)
     } catch (e: any) {
       setError('Back upload failed: ' + e.message)
@@ -151,40 +174,23 @@ export default function ScanPageContent() {
 
   const handleScanCard = async () => {
     if (!uploadedFrontUrl) { setError('Please upload front of card first'); return }
-    setScanning(true)
-    setError(null)
-
+    setScanning(true); setError(null)
     try {
       const res = await fetch('/api/scan-card', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageUrl: uploadedFrontUrl,
-          imageUrl2: uploadedBackUrl || undefined
-        })
+        body: JSON.stringify({ imageUrl: uploadedFrontUrl, imageUrl2: uploadedBackUrl || undefined })
       })
       const data = await res.json()
-
       if (data.success) {
         const d = data.data
-        setCompany(d.company || '')
-        setIndustry(d.industry || '')
-        setCity(d.city || '')
-        setStateName(d.state || '')
-        setPincode(d.pincode || '')
-        setAddress(d.address || '')
-        setProducts(d.products || '')
-        setAiSummary(d.ai_summary || '')
-
+        setCompany(d.company || ''); setIndustry(d.industry || '')
+        setCity(d.city || ''); setStateName(d.state || '')
+        setPincode(d.pincode || ''); setAddress(d.address || '')
+        setProducts(d.products || ''); setAiSummary(d.ai_summary || '')
         if (d.people?.length > 0) {
           setPeople(prev => prev.map((p, i) =>
-            d.people[i] ? {
-              name: d.people[i].name || '',
-              designation: d.people[i].designation || '',
-              phone1: d.people[i].phone1 || '',
-              phone2: d.people[i].phone2 || '',
-              email: d.people[i].email || ''
-            } : p
+            d.people[i] ? { name:d.people[i].name||'', designation:d.people[i].designation||'', phone1:d.people[i].phone1||'', phone2:d.people[i].phone2||'', email:d.people[i].email||'' } : p
           ))
           setWhatsappNumber(d.people[0]?.phone1 || '')
         }
@@ -199,31 +205,44 @@ export default function ScanPageContent() {
     }
   }
 
+  const handleVoiceTranscript = useCallback(async (text: string) => {
+    setNote(prev => prev ? prev + ' ' + text : text)
+
+    // Auto-extract follow-up from voice note using Gemini
+    try {
+      const res = await fetch('/api/voice-followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, textOnly: true })
+      })
+      const data = await res.json()
+      if (data.success && data.due_date && data.action) {
+        // Will be used when saving the scan
+        console.log('Follow-up extracted:', data.action, data.due_date)
+      }
+    } catch {}
+  }, [])
+
   const handleSave = async () => {
     const hasData = company || people[0].name || people[0].phone1
     if (!hasData) { alert('Please fill at least company name or contact details'); return }
 
     setSaving(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setSaving(false); return }
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.user) { setSaving(false); return }
+    const userId = session.user.id
 
-    const { data: profile } = await supabase.from('users').select('name').eq('id', user.id).single()
+    const { data: profile } = await supabase.from('users').select('name').eq('id', userId).single()
     const userName = profile?.name || 'Unknown'
 
     const fullNote = [aiSummary, note].filter(Boolean).join('\n')
 
     const { data: scan, error: scanError } = await supabase.from('scans').insert({
-      scanner_id: user.id,
-      scanned_by_name: userName,
-      mode: scanMode,
-      event_id: eventId || null,
-      company, industry, address,
-      city, state: stateName, pincode, products,
-      image_url: uploadedFrontUrl,
-      raw_text: aiSummary,
-      note: fullNote, tag,
-      lead_status: 'new',
-      deal_value: 0
+      scanner_id: userId, scanned_by_name: userName,
+      mode: scanMode, event_id: eventId || null,
+      company, industry, address, city, state: stateName, pincode, products,
+      image_url: uploadedFrontUrl, raw_text: aiSummary,
+      note: fullNote, tag, lead_status: 'new', deal_value: 0
     }).select().single()
 
     if (scanError || !scan) { setSaving(false); return }
@@ -232,19 +251,42 @@ export default function ScanPageContent() {
     if (validPeople.length > 0) {
       await supabase.from('contacts').insert(
         validPeople.map(p => ({
-          scan_id: scan.id, scanner_id: user.id,
+          scan_id: scan.id, scanner_id: userId,
           name: p.name, designation: p.designation,
-          phone1: p.phone1, phone2: p.phone2,
-          phone3: '', email: p.email
+          phone1: p.phone1, phone2: p.phone2, phone3: '', email: p.email
         }))
       )
     }
 
     await supabase.from('lead_activity').insert({
-      scan_id: scan.id, user_id: user.id, user_name: userName,
-      action: 'scanned', new_value: tag || 'untagged',
-      note: fullNote || ''
+      scan_id: scan.id, user_id: userId, user_name: userName,
+      action: 'scanned', new_value: tag || 'untagged', note: fullNote || ''
     })
+
+    // Auto-extract follow-up from note using Gemini
+    if (note.trim()) {
+      try {
+        const res = await fetch('/api/voice-followup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: note, textOnly: true })
+        })
+        const data = await res.json()
+        if (data.success && data.due_date && data.action) {
+          const firstPerson = validPeople[0]
+          await supabase.from('follow_ups').insert({
+            scan_id: scan.id,
+            user_id: userId,
+            contact_name: firstPerson?.name || '',
+            company: company || '',
+            action: data.action,
+            due_date: data.due_date,
+            note: note,
+            status: 'pending'
+          })
+        }
+      } catch {}
+    }
 
     setSaved(true)
     setSaving(false)
@@ -270,50 +312,26 @@ export default function ScanPageContent() {
     ? [{label:'Hot',color:'#D85A30',bg:'#FAECE7'},{label:'Warm',color:'#BA7517',bg:'#FAEEDA'},{label:'Cold',color:'#185FA5',bg:'#E6F1FB'}]
     : [{label:'High',color:'#27500A',bg:'#EAF3DE'},{label:'Medium',color:'#BA7517',bg:'#FAEEDA'},{label:'Low',color:'#5F5E5A',bg:'#F1EFE8'}]
 
-  const inputStyle: React.CSSProperties = {
-    width:'100%', padding:'9px 10px', borderRadius:'8px',
-    border:'1px solid #e0e0e0', fontSize:'13px',
-    fontFamily:'sans-serif', boxSizing:'border-box',
-    backgroundColor:'white', color:'#111'
-  }
-  const labelStyle: React.CSSProperties = {
-    fontSize:'11px', color:'#999', fontWeight:'500',
-    marginBottom:'3px', display:'block',
-    textTransform:'uppercase', letterSpacing:'0.04em'
-  }
-
-  const Field = ({ label, value, onChange, placeholder, type='text' }: any) => (
-    <div style={{marginBottom:'10px'}}>
-      <label style={labelStyle}>{label}</label>
-      <input type={type} value={value} onChange={(e:any)=>onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
-    </div>
-  )
-
   return (
     <MobileLayout>
       {/* Header */}
       <div style={{backgroundColor:primary,padding:'16px 20px 14px'}}>
-        <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif",marginBottom:'8px'}}>
-          Scan Business Card
-        </div>
+        <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif",marginBottom:'8px'}}>Scan Business Card</div>
         {eventName && <div style={{fontSize:'12px',color:'rgba(255,255,255,0.8)',marginBottom:'10px'}}>🏪 {eventName}</div>}
         <div style={{display:'flex',backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'20px',padding:'2px',width:'fit-content'}}>
-          <button onClick={()=>{setScanMode('seller');setTag('')}} style={{padding:'5px 18px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:isSeller?'white':'transparent',color:isSeller?primary:'rgba(255,255,255,0.8)'}}>
-            Seller
-          </button>
-          <button onClick={()=>{setScanMode('buyer');setTag('')}} style={{padding:'5px 18px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:!isSeller?'white':'transparent',color:!isSeller?primary:'rgba(255,255,255,0.8)'}}>
-            Buyer
-          </button>
+          <button onClick={()=>{setScanMode('seller');setTag('')}} style={{padding:'5px 18px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:isSeller?'white':'transparent',color:isSeller?primary:'rgba(255,255,255,0.8)'}}>Seller</button>
+          <button onClick={()=>{setScanMode('buyer');setTag('')}} style={{padding:'5px 18px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:!isSeller?'white':'transparent',color:!isSeller?primary:'rgba(255,255,255,0.8)'}}>Buyer</button>
         </div>
       </div>
 
       <div style={{padding:'16px'}}>
 
-        {/* WhatsApp after save */}
+        {/* After save — WhatsApp */}
         {saved && (
           <div>
-            <div style={{padding:'14px',backgroundColor:'#EAF3DE',borderRadius:'10px',color:'#27500A',fontSize:'14px',textAlign:'center',marginBottom:'14px',fontWeight:'500'}}>
+            <div style={{padding:'14px',backgroundColor:'#EAF3DE',borderRadius:'10px',color:'#27500A',fontSize:'14px',textAlign:'center',marginBottom:'14px',fontWeight:'600'}}>
               ✅ Contact saved!
+              {note && <div style={{fontSize:'11px',color:'#3B6D11',marginTop:'4px',fontWeight:'400'}}>Follow-up auto-extracted from your note</div>}
             </div>
             <div style={{backgroundColor:'#E7F7EE',borderRadius:'12px',padding:'16px',border:'1px solid #b2dfdb',marginBottom:'12px'}}>
               <div style={{fontSize:'14px',fontWeight:'600',color:'#111',marginBottom:'4px'}}>💬 Send WhatsApp now?</div>
@@ -332,82 +350,46 @@ export default function ScanPageContent() {
                 <button onClick={reset} style={{padding:'12px 14px',backgroundColor:'#f5f5f5',color:'#666',border:'none',borderRadius:'8px',fontSize:'13px',cursor:'pointer'}}>Skip</button>
               </div>
             </div>
-            <button onClick={reset} style={{width:'100%',padding:'12px',backgroundColor:'white',color:'#666',border:'1px solid #ddd',borderRadius:'8px',fontSize:'14px',cursor:'pointer'}}>
-              📷 Scan Another Card
-            </button>
+            <button onClick={reset} style={{width:'100%',padding:'12px',backgroundColor:'white',color:'#666',border:'1px solid #ddd',borderRadius:'8px',fontSize:'14px',cursor:'pointer'}}>📷 Scan Another Card</button>
           </div>
         )}
 
         {!saved && (
           <>
-            {/* FRONT + BACK card upload */}
+            {/* Card upload */}
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'12px'}}>
               <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'12px'}}>📷 Card Photos</div>
 
-              {/* Front */}
               <div style={{marginBottom:'10px'}}>
-                <label style={labelStyle}>Front of card <span style={{color:'#cc0000'}}>*</span></label>
-                <div
-                  onClick={()=>fileInputFront.current?.click()}
-                  style={{border:previewFront?'2px solid '+primary:'2px dashed #ccc',borderRadius:'10px',padding:previewFront?'8px':'20px',textAlign:'center',cursor:'pointer',backgroundColor:previewFront?'#f0faf5':'#fafafa',position:'relative'}}
-                >
-                  {uploading==='front' && (
-                    <div style={{position:'absolute',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(255,255,255,0.9)',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'8px',zIndex:1}}>
-                      <span style={{fontSize:'12px',color:primary}}>Uploading...</span>
-                    </div>
-                  )}
+                <label style={labelStyle}>Front of card <span style={{color:'#E53E3E'}}>*</span></label>
+                <div onClick={()=>fileInputFront.current?.click()} style={{border:previewFront?'2px solid '+primary:'2px dashed #ccc',borderRadius:'10px',padding:previewFront?'8px':'20px',textAlign:'center',cursor:'pointer',backgroundColor:previewFront?'#f0faf5':'#fafafa',position:'relative'}}>
+                  {uploading==='front' && <div style={{position:'absolute',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(255,255,255,0.9)',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'8px',zIndex:1}}><span style={{fontSize:'12px',color:primary}}>Uploading...</span></div>}
                   {previewFront ? (
                     <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                       <img src={previewFront} alt="front" style={{width:'70px',height:'44px',objectFit:'cover',borderRadius:'6px',border:'1px solid #ddd',flexShrink:0}} />
-                      <div style={{textAlign:'left'}}>
-                        <div style={{fontSize:'12px',fontWeight:'600',color:primary}}>✓ Front uploaded</div>
-                        <div style={{fontSize:'11px',color:'#999'}}>Tap to change</div>
-                      </div>
+                      <div style={{textAlign:'left'}}><div style={{fontSize:'12px',fontWeight:'600',color:primary}}>✓ Front uploaded</div><div style={{fontSize:'11px',color:'#999'}}>Tap to change</div></div>
                     </div>
-                  ) : (
-                    <div>
-                      <div style={{fontSize:'24px',marginBottom:'4px'}}>📸</div>
-                      <div style={{fontSize:'13px',color:'#444',fontWeight:'500'}}>Tap to add front of card</div>
-                    </div>
-                  )}
+                  ) : <div><div style={{fontSize:'24px',marginBottom:'4px'}}>📸</div><div style={{fontSize:'13px',color:'#444',fontWeight:'500'}}>Tap to add front of card</div></div>}
                 </div>
                 <input ref={fileInputFront} type="file" accept="image/*" capture="environment" onChange={handleFrontChange} style={{display:'none'}} />
               </div>
 
-              {/* Back */}
               <div style={{marginBottom:'12px'}}>
                 <label style={labelStyle}>Back of card <span style={{color:'#bbb'}}>optional</span></label>
-                <div
-                  onClick={()=>fileInputBack.current?.click()}
-                  style={{border:previewBack?'2px solid #BA7517':'2px dashed #eee',borderRadius:'10px',padding:previewBack?'8px':'14px',textAlign:'center',cursor:'pointer',backgroundColor:previewBack?'#FAEEDA':'#fafafa',position:'relative'}}
-                >
-                  {uploading==='back' && (
-                    <div style={{position:'absolute',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(255,255,255,0.9)',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'8px',zIndex:1}}>
-                      <span style={{fontSize:'12px',color:'#BA7517'}}>Uploading...</span>
-                    </div>
-                  )}
+                <div onClick={()=>fileInputBack.current?.click()} style={{border:previewBack?'2px solid #BA7517':'2px dashed #eee',borderRadius:'10px',padding:previewBack?'8px':'14px',textAlign:'center',cursor:'pointer',backgroundColor:previewBack?'#FAEEDA':'#fafafa',position:'relative'}}>
+                  {uploading==='back' && <div style={{position:'absolute',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(255,255,255,0.9)',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'8px',zIndex:1}}><span style={{fontSize:'12px',color:'#BA7517'}}>Uploading...</span></div>}
                   {previewBack ? (
                     <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                       <img src={previewBack} alt="back" style={{width:'70px',height:'44px',objectFit:'cover',borderRadius:'6px',border:'1px solid #ddd',flexShrink:0}} />
-                      <div style={{textAlign:'left'}}>
-                        <div style={{fontSize:'12px',fontWeight:'600',color:'#BA7517'}}>✓ Back uploaded</div>
-                        <div style={{fontSize:'11px',color:'#999'}}>Tap to change</div>
-                      </div>
+                      <div style={{textAlign:'left'}}><div style={{fontSize:'12px',fontWeight:'600',color:'#BA7517'}}>✓ Back uploaded</div><div style={{fontSize:'11px',color:'#999'}}>Tap to change</div></div>
                     </div>
-                  ) : (
-                    <div style={{fontSize:'12px',color:'#bbb'}}>+ Add back of card for more details</div>
-                  )}
+                  ) : <div style={{fontSize:'12px',color:'#bbb'}}>+ Add back of card for more details</div>}
                 </div>
                 <input ref={fileInputBack} type="file" accept="image/*" capture="environment" onChange={handleBackChange} style={{display:'none'}} />
               </div>
 
-              {/* Scan button */}
               {uploadedFrontUrl && !scanned && (
-                <button
-                  onClick={handleScanCard}
-                  disabled={scanning || !!uploading}
-                  style={{width:'100%',padding:'12px',backgroundColor:scanning?'#999':primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:scanning?'not-allowed':'pointer'}}
-                >
+                <button onClick={handleScanCard} disabled={scanning||!!uploading} style={{width:'100%',padding:'12px',backgroundColor:scanning?'#999':primary,color:'white',border:'none',borderRadius:'8px',fontSize:'14px',fontWeight:'500',cursor:scanning?'not-allowed':'pointer'}}>
                   {scanning ? '🤖 AI Reading Card...' : `🤖 Read Card with AI${uploadedBackUrl?' (Front + Back)':' (Front only)'}`}
                 </button>
               )}
@@ -415,19 +397,13 @@ export default function ScanPageContent() {
               {scanned && (
                 <div style={{padding:'8px 12px',backgroundColor:'#EAF3DE',borderRadius:'8px',fontSize:'12px',color:'#27500A',fontWeight:'500',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                   ✓ Card read — check and edit below
-                  <button onClick={()=>{setScanned(false)}} style={{fontSize:'11px',color:'#666',background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}}>Re-scan</button>
+                  <button onClick={()=>setScanned(false)} style={{fontSize:'11px',color:'#666',background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}}>Re-scan</button>
                 </div>
               )}
             </div>
 
-            {/* Error */}
-            {error && (
-              <div style={{padding:'10px 12px',backgroundColor:'#fff8e1',border:'1px solid #ffe082',borderRadius:'8px',color:'#795548',fontSize:'12px',marginBottom:'12px'}}>
-                ⚠️ {error}
-              </div>
-            )}
+            {error && <div style={{padding:'10px 12px',backgroundColor:'#fff8e1',border:'1px solid #ffe082',borderRadius:'8px',color:'#795548',fontSize:'12px',marginBottom:'12px'}}>⚠️ {error}</div>}
 
-            {/* AI Summary */}
             {aiSummary && (
               <div style={{backgroundColor:'#EAF3DE',border:'1px solid #C0DD97',borderRadius:'12px',padding:'12px 14px',marginBottom:'12px'}}>
                 <div style={{fontSize:'11px',fontWeight:'600',color:'#27500A',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'0.04em'}}>🤖 AI Summary</div>
@@ -435,22 +411,19 @@ export default function ScanPageContent() {
               </div>
             )}
 
-            {/* Company */}
+            {/* Company details */}
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'12px'}}>
-              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'12px'}}>
-                🏢 Company Details
-                {scanning && <span style={{fontSize:'11px',color:primary,fontWeight:'400',marginLeft:'6px'}}>reading...</span>}
-              </div>
-              <Field label="Company Name" value={company} onChange={setCompany} placeholder="e.g. Sharma Enterprises" />
-              <Field label="Industry" value={industry} onChange={setIndustry} placeholder="e.g. Plastics, Textiles" />
+              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'12px'}}>🏢 Company Details{scanning && <span style={{fontSize:'11px',color:primary,fontWeight:'400',marginLeft:'6px'}}>reading...</span>}</div>
+              <Field label="Company Name" value={company} onChange={setCompany} placeholder="Sharma Enterprises" />
+              <Field label="Industry" value={industry} onChange={setIndustry} placeholder="Plastics / Textiles / Hardware" />
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'10px'}}>
                 <div>
                   <label style={labelStyle}>City</label>
-                  <input value={city} onChange={e=>setCity(e.target.value)} placeholder="Delhi" style={inputStyle} />
+                  <input value={city} onChange={e=>setCity(e.target.value)} placeholder="Delhi" autoComplete="off" style={inputStyle} />
                 </div>
                 <div>
                   <label style={labelStyle}>State</label>
-                  <input value={stateName} onChange={e=>setStateName(e.target.value)} placeholder="Delhi" style={inputStyle} />
+                  <input value={stateName} onChange={e=>setStateName(e.target.value)} placeholder="Delhi" autoComplete="off" style={inputStyle} />
                 </div>
               </div>
               <Field label="Address" value={address} onChange={setAddress} placeholder="Shop, street, area" />
@@ -461,22 +434,19 @@ export default function ScanPageContent() {
             {[0,1,2].map(i => (
               <div key={i} style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'12px'}}>
                 <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'12px'}}>
-                  👤 Person {i+1}
-                  {i>0 && <span style={{fontSize:'11px',color:'#bbb',fontWeight:'400',marginLeft:'6px'}}>optional</span>}
+                  👤 Person {i+1} {i>0&&<span style={{fontSize:'11px',color:'#bbb',fontWeight:'400',marginLeft:'6px'}}>optional</span>}
                 </div>
-                <Field label="Full Name" value={people[i].name} onChange={(v:string)=>updatePerson(i,'name',v)} placeholder="Rahul Sharma" />
-                <Field label="Designation" value={people[i].designation} onChange={(v:string)=>updatePerson(i,'designation',v)} placeholder="Owner / Manager" />
-                <Field label="Phone" value={people[i].phone1} onChange={(v:string)=>updatePerson(i,'phone1',v)} placeholder="9999999999" type="tel" />
-                <Field label="Phone 2" value={people[i].phone2} onChange={(v:string)=>updatePerson(i,'phone2',v)} placeholder="optional" type="tel" />
-                <Field label="Email" value={people[i].email} onChange={(v:string)=>updatePerson(i,'email',v)} placeholder="email@company.com" type="email" />
+                <Field label="Full Name" value={people[i].name} onChange={v=>updatePerson(i,'name',v)} placeholder="Rahul Sharma" />
+                <Field label="Designation" value={people[i].designation} onChange={v=>updatePerson(i,'designation',v)} placeholder="Owner / Manager" />
+                <Field label="Phone" value={people[i].phone1} onChange={v=>updatePerson(i,'phone1',v)} placeholder="9876543210" type="tel" />
+                <Field label="Phone 2" value={people[i].phone2} onChange={v=>updatePerson(i,'phone2',v)} placeholder="optional" type="tel" />
+                <Field label="Email" value={people[i].email} onChange={v=>updatePerson(i,'email',v)} placeholder="name@company.com" type="email" />
               </div>
             ))}
 
             {/* Tag */}
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'12px'}}>
-              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'10px'}}>
-                {isSeller?'🌡️ Lead Temperature':'📊 Interest Level'}
-              </div>
+              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'10px'}}>{isSeller?'🌡️ Lead Temperature':'📊 Interest Level'}</div>
               <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
                 {tags.map(t=>(
                   <button key={t.label} onClick={()=>setTag(tag===t.label?'':t.label)} style={{padding:'7px 20px',borderRadius:'20px',border:tag===t.label?'2px solid '+t.color:'2px solid #eee',backgroundColor:tag===t.label?t.bg:'white',color:tag===t.label?t.color:'#999',fontSize:'13px',fontWeight:'500',cursor:'pointer'}}>
@@ -488,15 +458,16 @@ export default function ScanPageContent() {
 
             {/* Note */}
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'16px'}}>
-              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'10px'}}>📝 Your Note</div>
+              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'6px'}}>📝 Your Note</div>
+              <div style={{fontSize:'11px',color:'#999',marginBottom:'8px'}}>💡 Mention a date in your note to auto-create a follow-up e.g. "kal call karna"</div>
               <div style={{display:'flex',gap:'8px',alignItems:'flex-start'}}>
                 <textarea
                   value={note}
                   onChange={e=>setNote(e.target.value)}
-                  placeholder="Type or hold 🎤 to speak..."
-                  style={{flex:1,padding:'10px',borderRadius:'8px',border:'1px solid #e0e0e0',fontSize:'13px',resize:'none',minHeight:'70px',fontFamily:'sans-serif',boxSizing:'border-box'}}
+                  placeholder="Type or hold 🎤 to speak — Hindi or English both work..."
+                  style={{flex:1,padding:'10px',borderRadius:'8px',border:'1.5px solid #D1FAE5',fontSize:'13px',resize:'none',minHeight:'70px',fontFamily:"'DM Sans', sans-serif",boxSizing:'border-box',outline:'none',backgroundColor:'white'}}
                 />
-                <MicButton onTranscript={(text)=>setNote(prev=>prev?prev+' '+text:text)} />
+                <MicButton onTranscript={handleVoiceTranscript} />
               </div>
             </div>
 
@@ -504,9 +475,9 @@ export default function ScanPageContent() {
             <button
               onClick={handleSave}
               disabled={saving||scanning||!!uploading}
-              style={{width:'100%',padding:'14px',backgroundColor:(saving||scanning||uploading)?'#ccc':primary,color:'white',border:'none',borderRadius:'10px',fontSize:'15px',fontWeight:'500',cursor:(saving||scanning||uploading)?'not-allowed':'pointer',marginBottom:'8px'}}
+              style={{width:'100%',padding:'14px',backgroundColor:(saving||scanning||uploading)?'#ccc':primary,color:'white',border:'none',borderRadius:'10px',fontSize:'15px',fontWeight:'600',cursor:(saving||scanning||uploading)?'not-allowed':'pointer',marginBottom:'8px',boxShadow:(saving||scanning||uploading)?'none':'0 4px 14px rgba(15,110,86,0.3)'}}
             >
-              {saving?'Saving...':scanning?'Reading card...':uploading?'Uploading...':scanned?`Save ${isSeller?'Seller':'Buyer'} Contact`:`Save ${isSeller?'Seller':'Buyer'} Contact`}
+              {saving?'Saving...':scanning?'Reading card...':uploading?'Uploading...':`Save ${isSeller?'Seller':'Buyer'} Contact`}
             </button>
           </>
         )}

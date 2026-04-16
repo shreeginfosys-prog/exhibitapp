@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr'
+import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 
@@ -27,48 +28,89 @@ export async function GET(request: Request) {
       const { data: { user } } = await supabase.auth.getUser()
 
       if (user) {
+        // Use service role for admin operations
+        const adminSupabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY!
+        )
+
         const { data: profile } = await supabase
           .from('users')
-          .select('type, onboarding_complete')
+          .select('account_type, onboarding_complete, parent_user_id')
           .eq('id', user.id)
           .single()
 
         if (!profile) {
-  // Check if this is an invited sub-user
-  const ownerId = new URL(request.url).searchParams.get('owner')
-  const inviteType = new URL(request.url).searchParams.get('type')
+          // New user — check if invited as sub-user via team_members
+          const { data: teamMember } = await adminSupabase
+            .from('team_members')
+            .select('owner_id')
+            .eq('member_email', user.email?.toLowerCase() || '')
+            .in('status', ['active', 'invited', 'pending'])
+            .single()
 
-  if (inviteType === 'invite' && ownerId) {
-    // Create sub-user profile linked to owner
-    await supabase.from('users').insert({
-      id: user.id,
-      email: user.email,
-      name: user.user_metadata?.full_name || user.email?.split('@')[0] || '',
-      photo: user.user_metadata?.avatar_url || '',
-      account_type: 'member',
-      parent_user_id: ownerId,
-      onboarding_complete: true
-    })
+          const ownerId = searchParams.get('owner') || teamMember?.owner_id || null
+          const isInvite = searchParams.get('type') === 'invite' || !!teamMember
 
-    // Link team_member record with this user's ID
-    await supabase
-      .from('team_members')
-      .update({ member_user_id: user.id, status: 'active' })
-      .eq('owner_id', ownerId)
-      .eq('member_email', user.email?.toLowerCase())
+          if (isInvite && ownerId) {
+            // Create sub-user profile linked to owner
+            await adminSupabase.from('users').insert({
+              id: user.id,
+              email: user.email,
+              name: user.user_metadata?.full_name || user.email?.split('@')[0] || '',
+              photo: user.user_metadata?.avatar_url || '',
+              account_type: 'member',
+              parent_user_id: ownerId,
+              onboarding_complete: true
+            })
 
-    return NextResponse.redirect(`${origin}/dashboard`)
-  }
+            // Link team_member record
+            await adminSupabase
+              .from('team_members')
+              .update({ member_user_id: user.id, status: 'active' })
+              .eq('owner_id', ownerId)
+              .eq('member_email', user.email?.toLowerCase())
 
-  // Normal new user
-  await supabase.from('users').insert({
-    id: user.id,
-    email: user.email,
-    name: user.user_metadata?.full_name || '',
-    photo: user.user_metadata?.avatar_url || '',
-  })
-  return NextResponse.redirect(`${origin}/profile`)
-}
+            return NextResponse.redirect(`${origin}/dashboard`)
+          }
+
+          // Normal new user — go to profile setup
+          await supabase.from('users').insert({
+            id: user.id,
+            email: user.email,
+            name: user.user_metadata?.full_name || '',
+            photo: user.user_metadata?.avatar_url || '',
+          })
+          return NextResponse.redirect(`${origin}/profile`)
+        }
+
+        // Existing user — check if they need to be linked as sub-user
+        if (!profile.parent_user_id) {
+          const { data: teamMember } = await adminSupabase
+            .from('team_members')
+            .select('owner_id')
+            .eq('member_email', user.email?.toLowerCase() || '')
+            .in('status', ['active', 'invited', 'pending'])
+            .not('owner_id', 'is', null)
+            .single()
+
+          if (teamMember?.owner_id) {
+            // Auto-link this user as sub-user
+            await adminSupabase.from('users').update({
+              account_type: 'member',
+              parent_user_id: teamMember.owner_id,
+              onboarding_complete: true
+            }).eq('id', user.id)
+
+            await adminSupabase
+              .from('team_members')
+              .update({ member_user_id: user.id, status: 'active' })
+              .eq('owner_id', teamMember.owner_id)
+              .eq('member_email', user.email?.toLowerCase())
+
+            return NextResponse.redirect(`${origin}/dashboard`)
+          }
+        }
 
         if (!profile.onboarding_complete) {
           return NextResponse.redirect(`${origin}/profile`)
