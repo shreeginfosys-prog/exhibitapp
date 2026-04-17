@@ -389,9 +389,17 @@ export default function ContactsPage() {
               )}
 
               {/* AI Summary / Note */}
+              {scan.raw_text && (
+                <div style={{margin:'0 16px 8px',padding:'8px 12px',backgroundColor:'#EAF3DE',borderRadius:'8px',fontSize:'12px',color:'#1a3a12',borderLeft:'3px solid #27500A',lineHeight:'1.5'}}>
+                  <div style={{fontSize:'10px',fontWeight:'700',color:'#27500A',textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'4px'}}>🤖 AI Summary</div>
+                  <div>{scan.raw_text}</div>
+                </div>
+              )}
+
               {scan.note && (
                 <div style={{margin:'0 16px 12px',padding:'8px 12px',backgroundColor:'#f0faf5',borderRadius:'8px',fontSize:'12px',color:'#333',borderLeft:'3px solid '+primary,lineHeight:'1.5'}}>
-                  {scan.note}
+                  <div style={{fontSize:'10px',fontWeight:'700',color:primary,textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:'4px'}}>📝 Note</div>
+                  <div style={{fontWeight:'400',color:'#111'}}>{scan.note}</div>
                 </div>
               )}
 

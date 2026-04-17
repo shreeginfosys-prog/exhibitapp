@@ -235,14 +235,14 @@ export default function ScanPageContent() {
     const { data: profile } = await supabase.from('users').select('name').eq('id', userId).single()
     const userName = profile?.name || 'Unknown'
 
-    const fullNote = [aiSummary, note].filter(Boolean).join('\n')
+    const fullNote = note  // only user's note, not AI summary
 
     const { data: scan, error: scanError } = await supabase.from('scans').insert({
       scanner_id: userId, scanned_by_name: userName,
       mode: scanMode, event_id: eventId || null,
       company, industry, address, city, state: stateName, pincode, products,
       image_url: uploadedFrontUrl, raw_text: aiSummary,
-      note: fullNote, tag, lead_status: 'new', deal_value: 0
+      note: note, tag, lead_status: 'new', deal_value: 0
     }).select().single()
 
     if (scanError || !scan) { setSaving(false); return }
