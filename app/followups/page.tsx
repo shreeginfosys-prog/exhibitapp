@@ -7,12 +7,12 @@ import MobileLayout from '../components/MobileLayout'
 const supabase = createClient()
 const primary = '#0F6E56'
 
-const statusConfig: Record<string,{label:string;color:string;bg:string}> = {
+const STATUS_CONFIG: Record<string,{label:string;color:string;bg:string}> = {
   'new':{label:'New',color:'#888',bg:'#f0f0f0'},
   'contacted':{label:'Contacted',color:'#185FA5',bg:'#E6F1FB'},
   'interested':{label:'Interested',color:'#BA7517',bg:'#FAEEDA'},
   'done':{label:'Deal Done ✓',color:'#27500A',bg:'#EAF3DE'},
-  'lost':{label:'Not Now',color:'#993C1D',bg:'#FAECE7'},
+  'lost':{label:'Not Interested',color:'#993C1D',bg:'#FAECE7'},
 }
 
 export default function FollowupsPage() {
@@ -20,12 +20,13 @@ export default function FollowupsPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'pending'|'done'>('pending')
 
-  // Reschedule + status change state
   const [rescheduleId, setRescheduleId] = useState<string|null>(null)
   const [rescheduleDate, setRescheduleDate] = useState('')
   const [statusChangeId, setStatusChangeId] = useState<string|null>(null)
   const [statusChangeVal, setStatusChangeVal] = useState('')
   const [statusNote, setStatusNote] = useState('')
+  const [addNoteId, setAddNoteId] = useState<string|null>(null)
+  const [addNoteText, setAddNoteText] = useState('')
 
   useEffect(() => { fetchFollowups() }, [])
 
@@ -33,10 +34,30 @@ export default function FollowupsPage() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session?.user) { window.location.href = '/login'; return }
 
+    // Owner sees team follow-ups too
+    const { data: profile } = await supabase
+      .from('users')
+      .select('parent_user_id')
+      .eq('id', session.user.id)
+      .single()
+
+    let userIds = [session.user.id]
+    if (!profile?.parent_user_id) {
+      const { data: team } = await supabase
+        .from('team_members')
+        .select('member_user_id')
+        .eq('owner_id', session.user.id)
+        .eq('status', 'active')
+        .not('member_user_id', 'is', null)
+      if (team?.length) {
+        userIds = [session.user.id, ...team.map((t:any) => t.member_user_id)]
+      }
+    }
+
     const { data } = await supabase
       .from('follow_ups')
-      .select('*, scans(id, company, city, lead_status, contacts(name, phone1))')
-      .eq('user_id', session.user.id)
+      .select('*, scans(id, company, city, lead_status, raw_text, note, contacts(name, phone1))')
+      .in('user_id', userIds)
       .order('due_date', { ascending: true })
 
     setFollowups(data || [])
@@ -62,6 +83,33 @@ export default function FollowupsPage() {
     fetchFollowups()
   }
 
+  const addNote = async (followup: any) => {
+    if (!addNoteText.trim()) return
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.user) return
+    const { data: profile } = await supabase.from('users').select('name').eq('id', session.user.id).single()
+    const userName = profile?.name || 'Unknown'
+
+    // Add note to lead activity
+    await supabase.from('lead_activity').insert({
+      scan_id: followup.scan_id,
+      user_id: session.user.id,
+      user_name: userName,
+      action: 'note_added',
+      new_value: 'note',
+      note: addNoteText
+    })
+
+    // Update follow-up note
+    await supabase.from('follow_ups').update({
+      note: addNoteText
+    }).eq('id', followup.id)
+
+    setAddNoteId(null)
+    setAddNoteText('')
+    fetchFollowups()
+  }
+
   const changeLeadStatus = async (followup: any) => {
     if (!statusNote.trim()) { alert('Note is required'); return }
     if (!statusChangeVal) return
@@ -71,10 +119,8 @@ export default function FollowupsPage() {
     const { data: profile } = await supabase.from('users').select('name').eq('id', session.user.id).single()
     const userName = profile?.name || 'Unknown'
 
-    // Update scan status
     await supabase.from('scans').update({ lead_status: statusChangeVal }).eq('id', followup.scan_id)
 
-    // Log activity
     await supabase.from('lead_activity').insert({
       scan_id: followup.scan_id,
       user_id: session.user.id,
@@ -83,6 +129,14 @@ export default function FollowupsPage() {
       new_value: statusChangeVal,
       note: statusNote
     })
+
+    // If done — mark follow-up as done too
+    if (statusChangeVal === 'done') {
+      await supabase.from('follow_ups').update({
+        status: 'done',
+        completed_at: new Date().toISOString()
+      }).eq('id', followup.id)
+    }
 
     setStatusChangeId(null)
     setStatusChangeVal('')
@@ -117,8 +171,15 @@ export default function FollowupsPage() {
     if (date.toDateString()===tomorrow.toDateString()) return 'Tomorrow'
     const diff = Math.floor((date.getTime()-today.getTime())/(1000*60*60*24))
     if (diff > 0 && diff <= 7) return `In ${diff} days`
-    if (diff < 0) return `${Math.abs(diff)} days ago`
+    if (diff < 0) return `${Math.abs(diff)} days ago ⚠️`
     return date.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
+  }
+
+  const inputBase: React.CSSProperties = {
+    width:'100%', padding:'9px 10px', borderRadius:'8px',
+    border:'1.5px solid #D1FAE5', fontSize:'12px',
+    fontFamily:"'DM Sans',sans-serif", boxSizing:'border-box',
+    backgroundColor:'white', color:'#111', outline:'none'
   }
 
   const FollowupCard = ({ item, isOverdue }: { item: any, isOverdue?: boolean }) => {
@@ -126,35 +187,51 @@ export default function FollowupsPage() {
     const scanStatus = item.scans?.lead_status || 'new'
     const isRescheduling = rescheduleId === item.id
     const isChangingStatus = statusChangeId === item.id
+    const isAddingNote = addNoteId === item.id
 
     return (
-      <div style={{backgroundColor:'white',border:isOverdue?'1.5px solid #FAECE7':'1px solid #eee',borderRadius:'12px',padding:'14px 16px',marginBottom:'10px'}}>
+      <div style={{backgroundColor:'white',border:isOverdue?'1.5px solid #FAECE7':'1px solid #eee',borderRadius:'12px',padding:'14px 16px',marginBottom:'10px',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
 
-        {/* Header */}
+        {/* Header row */}
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'8px'}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:'14px',fontWeight:'600',color:'#111',marginBottom:'2px'}}>
               {item.contact_name || contact?.name || 'Unknown'}
             </div>
-            <div style={{fontSize:'12px',color:'#666',marginBottom:'2px'}}>{item.company || item.scans?.company || ''}</div>
-            {/* Lead status badge */}
-            <span style={{fontSize:'10px',padding:'2px 7px',borderRadius:'8px',backgroundColor:statusConfig[scanStatus]?.bg||'#f0f0f0',color:statusConfig[scanStatus]?.color||'#888',fontWeight:'600'}}>
-              {statusConfig[scanStatus]?.label||scanStatus}
+            <div style={{fontSize:'12px',color:'#666',marginBottom:'4px'}}>
+              {item.company || item.scans?.company || ''}
+            </div>
+            <span style={{fontSize:'10px',padding:'2px 7px',borderRadius:'8px',backgroundColor:STATUS_CONFIG[scanStatus]?.bg||'#f0f0f0',color:STATUS_CONFIG[scanStatus]?.color||'#888',fontWeight:'600'}}>
+              {STATUS_CONFIG[scanStatus]?.label||scanStatus}
             </span>
           </div>
-          <div style={{textAlign:'right',flexShrink:0,marginLeft:'10px'}}>
-            {item.due_date && (
-              <div style={{fontSize:'11px',padding:'3px 8px',borderRadius:'6px',backgroundColor:isOverdue?'#FAECE7':'#EAF3DE',color:isOverdue?'#D85A30':'#27500A',fontWeight:'600',marginBottom:'4px'}}>
-                {isOverdue?'⚠️ ':''}{formatDate(item.due_date)}
+          {item.due_date && (
+            <div style={{textAlign:'right',flexShrink:0,marginLeft:'10px'}}>
+              <div style={{fontSize:'11px',padding:'3px 8px',borderRadius:'6px',backgroundColor:isOverdue?'#FAECE7':'#EAF3DE',color:isOverdue?'#D85A30':'#27500A',fontWeight:'600'}}>
+                📅 {formatDate(item.due_date)}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* Action */}
+        {/* Action — what needs to be done */}
         {item.action && (
-          <div style={{fontSize:'13px',color:'#333',backgroundColor:'#f9f9f9',padding:'8px 10px',borderRadius:'8px',borderLeft:'3px solid '+primary,marginBottom:'10px',lineHeight:'1.5'}}>
+          <div style={{fontSize:'13px',color:'#333',backgroundColor:'#f0faf5',padding:'8px 10px',borderRadius:'8px',borderLeft:'3px solid '+primary,marginBottom:'8px',lineHeight:'1.5'}}>
             {item.action}
+          </div>
+        )}
+
+        {/* Note from last interaction */}
+        {item.note && item.note !== item.action && (
+          <div style={{fontSize:'12px',color:'#555',backgroundColor:'#f9f9f9',padding:'7px 10px',borderRadius:'8px',borderLeft:'2px solid #ddd',marginBottom:'8px',lineHeight:'1.5',fontStyle:'italic'}}>
+            "{item.note}"
+          </div>
+        )}
+
+        {/* AI summary from scan */}
+        {item.scans?.raw_text && (
+          <div style={{fontSize:'11px',color:'#27500A',backgroundColor:'#EAF3DE',padding:'6px 10px',borderRadius:'6px',marginBottom:'8px',lineHeight:'1.5'}}>
+            🤖 {item.scans.raw_text}
           </div>
         )}
 
@@ -170,13 +247,13 @@ export default function FollowupsPage() {
         {/* Reschedule panel */}
         {isRescheduling && (
           <div style={{backgroundColor:'#EAF3DE',borderRadius:'10px',padding:'12px',marginBottom:'10px',border:'1px solid #C0DD97'}}>
-            <div style={{fontSize:'12px',fontWeight:'600',color:'#27500A',marginBottom:'8px'}}>📅 Set new date</div>
+            <div style={{fontSize:'12px',fontWeight:'600',color:'#27500A',marginBottom:'8px'}}>📅 Set new follow-up date</div>
             <input
               type="date"
               value={rescheduleDate}
               onChange={e=>setRescheduleDate(e.target.value)}
               min={new Date().toISOString().split('T')[0]}
-              style={{width:'100%',padding:'9px',borderRadius:'8px',border:'1.5px solid #C0DD97',fontSize:'13px',fontFamily:"'DM Sans', sans-serif",boxSizing:'border-box',marginBottom:'8px',outline:'none'}}
+              style={{...inputBase,marginBottom:'8px'}}
             />
             <div style={{display:'flex',gap:'6px'}}>
               <button onClick={()=>reschedule(item.id)} style={{flex:1,padding:'8px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'600',cursor:'pointer'}}>Save New Date</button>
@@ -185,12 +262,30 @@ export default function FollowupsPage() {
           </div>
         )}
 
-        {/* Change lead status panel */}
+        {/* Add note panel */}
+        {isAddingNote && (
+          <div style={{backgroundColor:'#f9f9f9',borderRadius:'10px',padding:'12px',marginBottom:'10px',border:'1px solid #eee'}}>
+            <div style={{fontSize:'12px',fontWeight:'600',color:'#666',marginBottom:'8px'}}>📝 Add note to this follow-up</div>
+            <textarea
+              value={addNoteText}
+              onChange={e=>setAddNoteText(e.target.value)}
+              placeholder="What happened? What did you discuss?..."
+              autoFocus
+              style={{...inputBase,minHeight:'60px',resize:'none',marginBottom:'8px'}}
+            />
+            <div style={{display:'flex',gap:'6px'}}>
+              <button onClick={()=>addNote(item)} style={{flex:1,padding:'8px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'600',cursor:'pointer'}}>Save Note</button>
+              <button onClick={()=>{setAddNoteId(null);setAddNoteText('')}} style={{padding:'8px 12px',backgroundColor:'#f5f5f5',color:'#666',border:'none',borderRadius:'8px',fontSize:'12px',cursor:'pointer'}}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Change status panel */}
         {isChangingStatus && (
           <div style={{backgroundColor:'#fffbf0',borderRadius:'10px',padding:'12px',marginBottom:'10px',border:'1.5px solid #f5e6a3'}}>
             <div style={{fontSize:'12px',fontWeight:'600',color:'#666',marginBottom:'8px'}}>Update lead status</div>
             <div style={{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'8px'}}>
-              {Object.entries(statusConfig).map(([key,cfg])=>(
+              {Object.entries(STATUS_CONFIG).map(([key,cfg])=>(
                 <button key={key} onClick={()=>setStatusChangeVal(key)} style={{padding:'4px 10px',borderRadius:'16px',border:statusChangeVal===key?'2px solid '+cfg.color:'1.5px solid #eee',backgroundColor:statusChangeVal===key?cfg.bg:'white',color:statusChangeVal===key?cfg.color:'#bbb',fontSize:'11px',fontWeight:'600',cursor:'pointer'}}>
                   {cfg.label}
                 </button>
@@ -200,7 +295,7 @@ export default function FollowupsPage() {
               value={statusNote}
               onChange={e=>setStatusNote(e.target.value)}
               placeholder="Note is required — what happened in this follow-up?"
-              style={{width:'100%',padding:'9px',borderRadius:'8px',border:'1.5px solid #D1FAE5',fontSize:'12px',resize:'none',minHeight:'55px',fontFamily:"'DM Sans', sans-serif",boxSizing:'border-box',outline:'none',backgroundColor:'white',marginBottom:'8px'}}
+              style={{...inputBase,minHeight:'55px',resize:'none',marginBottom:'8px'}}
             />
             <div style={{display:'flex',gap:'6px'}}>
               <button onClick={()=>changeLeadStatus(item)} disabled={!statusChangeVal} style={{flex:1,padding:'8px',backgroundColor:statusChangeVal?primary:'#ccc',color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'600',cursor:statusChangeVal?'pointer':'not-allowed'}}>Save</button>
@@ -209,23 +304,26 @@ export default function FollowupsPage() {
           </div>
         )}
 
-        {/* Actions */}
-        {filter==='pending' && !isRescheduling && !isChangingStatus && (
+        {/* Action buttons */}
+        {filter==='pending' && !isRescheduling && !isChangingStatus && !isAddingNote && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             <button onClick={()=>markDone(item.id)} style={{flex:1,padding:'9px',backgroundColor:primary,color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'600',cursor:'pointer'}}>
               ✓ Done
             </button>
-            <button onClick={()=>{setRescheduleId(item.id);setRescheduleDate(item.due_date?.split('T')[0]||'')}} style={{padding:'9px 12px',backgroundColor:'#EAF3DE',color:'#27500A',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
-              📅 Reschedule
+            <button onClick={()=>{setAddNoteId(item.id);setAddNoteText('')}} style={{padding:'9px 10px',backgroundColor:'#f9f9f9',color:'#666',border:'1px solid #eee',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
+              📝 Note
             </button>
-            <button onClick={()=>{setStatusChangeId(item.id);setStatusChangeVal(scanStatus)}} style={{padding:'9px 12px',backgroundColor:'#E6F1FB',color:'#185FA5',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
-              🔄 Status
+            <button onClick={()=>{setRescheduleId(item.id);setRescheduleDate(item.due_date?.split('T')[0]||'')}} style={{padding:'9px 10px',backgroundColor:'#EAF3DE',color:'#27500A',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
+              📅
+            </button>
+            <button onClick={()=>{setStatusChangeId(item.id);setStatusChangeVal(scanStatus)}} style={{padding:'9px 10px',backgroundColor:'#E6F1FB',color:'#185FA5',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'500',cursor:'pointer'}}>
+              🔄
             </button>
           </div>
         )}
 
         {filter==='done' && item.completed_at && (
-          <div style={{fontSize:'11px',color:'#bbb',marginTop:'4px'}}>
+          <div style={{fontSize:'11px',color:'#27500A',fontWeight:'500',marginTop:'4px'}}>
             ✓ Completed {formatDate(item.completed_at)}
           </div>
         )}
@@ -296,7 +394,7 @@ export default function FollowupsPage() {
               {filter==='pending'?'All caught up!':'No completed follow-ups yet'}
             </div>
             <div style={{fontSize:'13px',color:'#bbb'}}>
-              {filter==='pending'?'Follow-ups will appear here when you set them from contacts':'Mark follow-ups as done to see them here'}
+              {filter==='pending'?'Set follow-up dates from the contacts page':'Mark follow-ups as done to see them here'}
             </div>
           </div>
         )}

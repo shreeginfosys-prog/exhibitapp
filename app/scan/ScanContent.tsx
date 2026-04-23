@@ -21,7 +21,7 @@ const labelStyle: React.CSSProperties = {
   textTransform:'uppercase', letterSpacing:'0.04em'
 }
 
-// Field outside component to prevent re-creation on every render (fixes keyboard hiding)
+// Field outside component — prevents keyboard hiding on mobile
 const Field = ({ label, value, onChange, placeholder, type='text' }: {
   label: string, value: string, onChange: (v:string)=>void, placeholder: string, type?: string
 }) => (
@@ -60,6 +60,11 @@ export default function ScanPageContent() {
   const [tag, setTag] = useState('')
   const [note, setNote] = useState('')
 
+  // Duplicate detection
+  const [duplicateFound, setDuplicateFound] = useState<any>(null)
+  const [duplicateAction, setDuplicateAction] = useState<'merge'|'separate'|null>(null)
+
+  // Editable fields
   const [company, setCompany] = useState('')
   const [industry, setIndustry] = useState('')
   const [city, setCity] = useState('')
@@ -129,7 +134,7 @@ export default function ScanPageContent() {
   const handleFrontChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setError(null); setScanned(false)
+    setError(null); setScanned(false); setDuplicateFound(null)
     const dataUrl = await new Promise<string>((resolve) => {
       const r = new FileReader()
       r.onload = (ev) => resolve(ev.target?.result as string)
@@ -190,11 +195,22 @@ export default function ScanPageContent() {
         setProducts(d.products || ''); setAiSummary(d.ai_summary || '')
         if (d.people?.length > 0) {
           setPeople(prev => prev.map((p, i) =>
-            d.people[i] ? { name:d.people[i].name||'', designation:d.people[i].designation||'', phone1:d.people[i].phone1||'', phone2:d.people[i].phone2||'', email:d.people[i].email||'' } : p
+            d.people[i] ? {
+              name:d.people[i].name||'',
+              designation:d.people[i].designation||'',
+              phone1:d.people[i].phone1||'',
+              phone2:d.people[i].phone2||'',
+              email:d.people[i].email||''
+            } : p
           ))
           setWhatsappNumber(d.people[0]?.phone1 || '')
         }
         setScanned(true)
+
+        // Check for duplicates after scan
+        if (d.company || d.people?.[0]?.phone1) {
+          await checkDuplicate(d.company, d.people?.[0]?.phone1)
+        }
       } else {
         setError(data.error || 'Could not read card. Please fill details manually.')
       }
@@ -205,10 +221,43 @@ export default function ScanPageContent() {
     }
   }
 
+  const checkDuplicate = async (companyName: string, phone: string) => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.user) return
+
+    // Check by phone first (most accurate)
+    if (phone) {
+      const { data: existingContacts } = await supabase
+        .from('contacts')
+        .select('*, scans(company, created_at, events(name))')
+        .eq('scanner_id', session.user.id)
+        .eq('phone1', phone)
+        .limit(1)
+
+      if (existingContacts?.length) {
+        setDuplicateFound(existingContacts[0])
+        return
+      }
+    }
+
+    // Check by company name
+    if (companyName) {
+      const { data: existingScans } = await supabase
+        .from('scans')
+        .select('*, contacts(*), events(name)')
+        .eq('scanner_id', session.user.id)
+        .ilike('company', companyName)
+        .limit(1)
+
+      if (existingScans?.length) {
+        setDuplicateFound({ fromScan: true, scan: existingScans[0] })
+      }
+    }
+  }
+
   const handleVoiceTranscript = useCallback(async (text: string) => {
     setNote(prev => prev ? prev + ' ' + text : text)
-
-    // Auto-extract follow-up from voice note using Gemini
+    // Auto extract follow-up
     try {
       const res = await fetch('/api/voice-followup', {
         method: 'POST',
@@ -217,7 +266,6 @@ export default function ScanPageContent() {
       })
       const data = await res.json()
       if (data.success && data.due_date && data.action) {
-        // Will be used when saving the scan
         console.log('Follow-up extracted:', data.action, data.due_date)
       }
     } catch {}
@@ -227,6 +275,12 @@ export default function ScanPageContent() {
     const hasData = company || people[0].name || people[0].phone1
     if (!hasData) { alert('Please fill at least company name or contact details'); return }
 
+    // If duplicate found and no action chosen yet
+    if (duplicateFound && !duplicateAction) {
+      alert('Please choose what to do with the duplicate contact above')
+      return
+    }
+
     setSaving(true)
     const { data: { session } } = await supabase.auth.getSession()
     if (!session?.user) { setSaving(false); return }
@@ -235,14 +289,22 @@ export default function ScanPageContent() {
     const { data: profile } = await supabase.from('users').select('name').eq('id', userId).single()
     const userName = profile?.name || 'Unknown'
 
-    const fullNote = note  // only user's note, not AI summary
+    // Auto tag with event name if scanning during event
+    const autoTag = tag || (eventName ? eventName : '')
 
     const { data: scan, error: scanError } = await supabase.from('scans').insert({
-      scanner_id: userId, scanned_by_name: userName,
-      mode: scanMode, event_id: eventId || null,
-      company, industry, address, city, state: stateName, pincode, products,
-      image_url: uploadedFrontUrl, raw_text: aiSummary,
-      note: note, tag, lead_status: 'new', deal_value: 0
+      scanner_id: userId,
+      scanned_by_name: userName,
+      mode: scanMode,
+      event_id: eventId || null,
+      company, industry, address,
+      city, state: stateName, pincode, products,
+      image_url: uploadedFrontUrl,
+      raw_text: aiSummary,
+      note: note,
+      tag: autoTag,
+      lead_status: 'new',
+      deal_value: 0
     }).select().single()
 
     if (scanError || !scan) { setSaving(false); return }
@@ -260,10 +322,12 @@ export default function ScanPageContent() {
 
     await supabase.from('lead_activity').insert({
       scan_id: scan.id, user_id: userId, user_name: userName,
-      action: 'scanned', new_value: tag || 'untagged', note: fullNote || ''
+      action: 'scanned',
+      new_value: autoTag || 'untagged',
+      note: note || ''
     })
 
-    // Auto-extract follow-up from note using Gemini
+    // Auto extract follow-up from note
     if (note.trim()) {
       try {
         const res = await fetch('/api/voice-followup', {
@@ -299,7 +363,7 @@ export default function ScanPageContent() {
     setTag(''); setNote(''); setAiSummary('')
     setCompany(''); setIndustry(''); setCity('')
     setStateName(''); setPincode(''); setAddress(''); setProducts('')
-    setWhatsappNumber('')
+    setWhatsappNumber(''); setDuplicateFound(null); setDuplicateAction(null)
     setPeople([
       { name:'', designation:'', phone1:'', phone2:'', email:'' },
       { name:'', designation:'', phone1:'', phone2:'', email:'' },
@@ -316,8 +380,14 @@ export default function ScanPageContent() {
     <MobileLayout>
       {/* Header */}
       <div style={{backgroundColor:primary,padding:'16px 20px 14px'}}>
-        <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif",marginBottom:'8px'}}>Scan Business Card</div>
-        {eventName && <div style={{fontSize:'12px',color:'rgba(255,255,255,0.8)',marginBottom:'10px'}}>🏪 {eventName}</div>}
+        <div style={{fontSize:'18px',fontWeight:'600',color:'white',fontFamily:"'Fraunces', serif",marginBottom:'8px'}}>
+          Scan Business Card
+        </div>
+        {eventName && (
+          <div style={{fontSize:'12px',color:'rgba(255,255,255,0.9)',marginBottom:'10px',backgroundColor:'rgba(255,255,255,0.15)',padding:'5px 10px',borderRadius:'6px',display:'inline-block'}}>
+            🏪 {eventName}
+          </div>
+        )}
         <div style={{display:'flex',backgroundColor:'rgba(255,255,255,0.15)',borderRadius:'20px',padding:'2px',width:'fit-content'}}>
           <button onClick={()=>{setScanMode('seller');setTag('')}} style={{padding:'5px 18px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:isSeller?'white':'transparent',color:isSeller?primary:'rgba(255,255,255,0.8)'}}>Seller</button>
           <button onClick={()=>{setScanMode('buyer');setTag('')}} style={{padding:'5px 18px',borderRadius:'18px',border:'none',fontSize:'13px',fontWeight:'500',cursor:'pointer',backgroundColor:!isSeller?'white':'transparent',color:!isSeller?primary:'rgba(255,255,255,0.8)'}}>Buyer</button>
@@ -331,7 +401,8 @@ export default function ScanPageContent() {
           <div>
             <div style={{padding:'14px',backgroundColor:'#EAF3DE',borderRadius:'10px',color:'#27500A',fontSize:'14px',textAlign:'center',marginBottom:'14px',fontWeight:'600'}}>
               ✅ Contact saved!
-              {note && <div style={{fontSize:'11px',color:'#3B6D11',marginTop:'4px',fontWeight:'400'}}>Follow-up auto-extracted from your note</div>}
+              {eventName && <div style={{fontSize:'11px',marginTop:'4px',fontWeight:'400'}}>Tagged with: {eventName}</div>}
+              {note && <div style={{fontSize:'11px',color:'#3B6D11',marginTop:'2px',fontWeight:'400'}}>Follow-up auto-extracted from your note</div>}
             </div>
             <div style={{backgroundColor:'#E7F7EE',borderRadius:'12px',padding:'16px',border:'1px solid #b2dfdb',marginBottom:'12px'}}>
               <div style={{fontSize:'14px',fontWeight:'600',color:'#111',marginBottom:'4px'}}>💬 Send WhatsApp now?</div>
@@ -350,7 +421,9 @@ export default function ScanPageContent() {
                 <button onClick={reset} style={{padding:'12px 14px',backgroundColor:'#f5f5f5',color:'#666',border:'none',borderRadius:'8px',fontSize:'13px',cursor:'pointer'}}>Skip</button>
               </div>
             </div>
-            <button onClick={reset} style={{width:'100%',padding:'12px',backgroundColor:'white',color:'#666',border:'1px solid #ddd',borderRadius:'8px',fontSize:'14px',cursor:'pointer'}}>📷 Scan Another Card</button>
+            <button onClick={reset} style={{width:'100%',padding:'12px',backgroundColor:'white',color:'#666',border:'1px solid #ddd',borderRadius:'8px',fontSize:'14px',cursor:'pointer'}}>
+              📷 Scan Another Card
+            </button>
           </div>
         )}
 
@@ -360,6 +433,7 @@ export default function ScanPageContent() {
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'12px'}}>
               <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'12px'}}>📷 Card Photos</div>
 
+              {/* Front */}
               <div style={{marginBottom:'10px'}}>
                 <label style={labelStyle}>Front of card <span style={{color:'#E53E3E'}}>*</span></label>
                 <div onClick={()=>fileInputFront.current?.click()} style={{border:previewFront?'2px solid '+primary:'2px dashed #ccc',borderRadius:'10px',padding:previewFront?'8px':'20px',textAlign:'center',cursor:'pointer',backgroundColor:previewFront?'#f0faf5':'#fafafa',position:'relative'}}>
@@ -367,13 +441,22 @@ export default function ScanPageContent() {
                   {previewFront ? (
                     <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                       <img src={previewFront} alt="front" style={{width:'70px',height:'44px',objectFit:'cover',borderRadius:'6px',border:'1px solid #ddd',flexShrink:0}} />
-                      <div style={{textAlign:'left'}}><div style={{fontSize:'12px',fontWeight:'600',color:primary}}>✓ Front uploaded</div><div style={{fontSize:'11px',color:'#999'}}>Tap to change</div></div>
+                      <div style={{textAlign:'left'}}>
+                        <div style={{fontSize:'12px',fontWeight:'600',color:primary}}>✓ Front uploaded</div>
+                        <div style={{fontSize:'11px',color:'#999'}}>Tap to change</div>
+                      </div>
                     </div>
-                  ) : <div><div style={{fontSize:'24px',marginBottom:'4px'}}>📸</div><div style={{fontSize:'13px',color:'#444',fontWeight:'500'}}>Tap to add front of card</div></div>}
+                  ) : (
+                    <div>
+                      <div style={{fontSize:'24px',marginBottom:'4px'}}>📸</div>
+                      <div style={{fontSize:'13px',color:'#444',fontWeight:'500'}}>Tap to add front of card</div>
+                    </div>
+                  )}
                 </div>
                 <input ref={fileInputFront} type="file" accept="image/*" capture="environment" onChange={handleFrontChange} style={{display:'none'}} />
               </div>
 
+              {/* Back */}
               <div style={{marginBottom:'12px'}}>
                 <label style={labelStyle}>Back of card <span style={{color:'#bbb'}}>optional</span></label>
                 <div onClick={()=>fileInputBack.current?.click()} style={{border:previewBack?'2px solid #BA7517':'2px dashed #eee',borderRadius:'10px',padding:previewBack?'8px':'14px',textAlign:'center',cursor:'pointer',backgroundColor:previewBack?'#FAEEDA':'#fafafa',position:'relative'}}>
@@ -381,9 +464,14 @@ export default function ScanPageContent() {
                   {previewBack ? (
                     <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                       <img src={previewBack} alt="back" style={{width:'70px',height:'44px',objectFit:'cover',borderRadius:'6px',border:'1px solid #ddd',flexShrink:0}} />
-                      <div style={{textAlign:'left'}}><div style={{fontSize:'12px',fontWeight:'600',color:'#BA7517'}}>✓ Back uploaded</div><div style={{fontSize:'11px',color:'#999'}}>Tap to change</div></div>
+                      <div style={{textAlign:'left'}}>
+                        <div style={{fontSize:'12px',fontWeight:'600',color:'#BA7517'}}>✓ Back uploaded</div>
+                        <div style={{fontSize:'11px',color:'#999'}}>Tap to change</div>
+                      </div>
                     </div>
-                  ) : <div style={{fontSize:'12px',color:'#bbb'}}>+ Add back of card for more details</div>}
+                  ) : (
+                    <div style={{fontSize:'12px',color:'#bbb'}}>+ Add back of card for more details</div>
+                  )}
                 </div>
                 <input ref={fileInputBack} type="file" accept="image/*" capture="environment" onChange={handleBackChange} style={{display:'none'}} />
               </div>
@@ -402,8 +490,43 @@ export default function ScanPageContent() {
               )}
             </div>
 
-            {error && <div style={{padding:'10px 12px',backgroundColor:'#fff8e1',border:'1px solid #ffe082',borderRadius:'8px',color:'#795548',fontSize:'12px',marginBottom:'12px'}}>⚠️ {error}</div>}
+            {/* Error */}
+            {error && (
+              <div style={{padding:'10px 12px',backgroundColor:'#fff8e1',border:'1px solid #ffe082',borderRadius:'8px',color:'#795548',fontSize:'12px',marginBottom:'12px'}}>
+                ⚠️ {error}
+              </div>
+            )}
 
+            {/* Duplicate warning */}
+            {duplicateFound && !duplicateAction && (
+              <div style={{padding:'12px 14px',backgroundColor:'#FFF3CD',border:'1.5px solid #FFD700',borderRadius:'10px',marginBottom:'12px'}}>
+                <div style={{fontSize:'13px',fontWeight:'700',color:'#856404',marginBottom:'6px'}}>
+                  ⚠️ Similar contact already exists!
+                </div>
+                <div style={{fontSize:'12px',color:'#6d5400',marginBottom:'10px'}}>
+                  {duplicateFound.fromScan
+                    ? `Company "${duplicateFound.scan?.company}" was scanned before`
+                    : `Phone ${duplicateFound.phone1} already in your contacts`}
+                </div>
+                <div style={{display:'flex',gap:'8px'}}>
+                  <button onClick={()=>setDuplicateAction('separate')} style={{flex:1,padding:'8px',backgroundColor:'white',color:'#856404',border:'1.5px solid #FFD700',borderRadius:'8px',fontSize:'12px',fontWeight:'600',cursor:'pointer'}}>
+                    Add Separately
+                  </button>
+                  <button onClick={()=>setDuplicateAction('merge')} style={{flex:1,padding:'8px',backgroundColor:'#856404',color:'white',border:'none',borderRadius:'8px',fontSize:'12px',fontWeight:'600',cursor:'pointer'}}>
+                    Still Save
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {duplicateAction && (
+              <div style={{padding:'8px 12px',backgroundColor:'#EAF3DE',borderRadius:'8px',fontSize:'12px',color:'#27500A',marginBottom:'12px',fontWeight:'500'}}>
+                ✓ {duplicateAction === 'merge' ? 'Will save as new entry' : 'Will add separately'}
+                <button onClick={()=>setDuplicateAction(null)} style={{marginLeft:'8px',fontSize:'11px',color:'#666',background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}}>Change</button>
+              </div>
+            )}
+
+            {/* AI Summary */}
             {aiSummary && (
               <div style={{backgroundColor:'#EAF3DE',border:'1px solid #C0DD97',borderRadius:'12px',padding:'12px 14px',marginBottom:'12px'}}>
                 <div style={{fontSize:'11px',fontWeight:'600',color:'#27500A',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'0.04em'}}>🤖 AI Summary</div>
@@ -413,7 +536,10 @@ export default function ScanPageContent() {
 
             {/* Company details */}
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'12px'}}>
-              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'12px'}}>🏢 Company Details{scanning && <span style={{fontSize:'11px',color:primary,fontWeight:'400',marginLeft:'6px'}}>reading...</span>}</div>
+              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'12px'}}>
+                🏢 Company Details
+                {scanning && <span style={{fontSize:'11px',color:primary,fontWeight:'400',marginLeft:'6px'}}>reading...</span>}
+              </div>
               <Field label="Company Name" value={company} onChange={setCompany} placeholder="Sharma Enterprises" />
               <Field label="Industry" value={industry} onChange={setIndustry} placeholder="Plastics / Textiles / Hardware" />
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'10px'}}>
@@ -446,7 +572,14 @@ export default function ScanPageContent() {
 
             {/* Tag */}
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'12px'}}>
-              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'10px'}}>{isSeller?'🌡️ Lead Temperature':'📊 Interest Level'}</div>
+              <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'6px'}}>
+                {isSeller?'🌡️ Lead Temperature':'📊 Interest Level'}
+              </div>
+              {eventName && (
+                <div style={{fontSize:'11px',color:'#666',marginBottom:'8px'}}>
+                  Event tag <strong>{eventName}</strong> will be auto-added
+                </div>
+              )}
               <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
                 {tags.map(t=>(
                   <button key={t.label} onClick={()=>setTag(tag===t.label?'':t.label)} style={{padding:'7px 20px',borderRadius:'20px',border:tag===t.label?'2px solid '+t.color:'2px solid #eee',backgroundColor:tag===t.label?t.bg:'white',color:tag===t.label?t.color:'#999',fontSize:'13px',fontWeight:'500',cursor:'pointer'}}>
@@ -459,23 +592,33 @@ export default function ScanPageContent() {
             {/* Note */}
             <div style={{backgroundColor:'white',border:'1px solid #eee',borderRadius:'12px',padding:'14px',marginBottom:'16px'}}>
               <div style={{fontSize:'13px',fontWeight:'600',color:'#111',marginBottom:'6px'}}>📝 Your Note</div>
-              <div style={{fontSize:'11px',color:'#999',marginBottom:'8px'}}>💡 Mention a date in your note to auto-create a follow-up e.g. "kal call karna"</div>
+              <div style={{fontSize:'11px',color:'#999',marginBottom:'8px'}}>
+                💡 Mention a date to auto-create a follow-up — e.g. "kal call karna" or "next week demo"
+              </div>
               <div style={{display:'flex',gap:'8px',alignItems:'flex-start'}}>
                 <textarea
                   value={note}
                   onChange={e=>setNote(e.target.value)}
-                  placeholder="Type or hold 🎤 to speak — Hindi or English both work..."
+                  placeholder="Type or tap 🎤 to speak — Hindi or English both work..."
                   style={{flex:1,padding:'10px',borderRadius:'8px',border:'1.5px solid #D1FAE5',fontSize:'13px',resize:'none',minHeight:'70px',fontFamily:"'DM Sans', sans-serif",boxSizing:'border-box',outline:'none',backgroundColor:'white'}}
                 />
                 <MicButton onTranscript={handleVoiceTranscript} />
               </div>
             </div>
 
-            {/* Save */}
+            {/* Save button */}
             <button
               onClick={handleSave}
               disabled={saving||scanning||!!uploading}
-              style={{width:'100%',padding:'14px',backgroundColor:(saving||scanning||uploading)?'#ccc':primary,color:'white',border:'none',borderRadius:'10px',fontSize:'15px',fontWeight:'600',cursor:(saving||scanning||uploading)?'not-allowed':'pointer',marginBottom:'8px',boxShadow:(saving||scanning||uploading)?'none':'0 4px 14px rgba(15,110,86,0.3)'}}
+              style={{
+                width:'100%', padding:'14px',
+                backgroundColor:(saving||scanning||uploading)?'#ccc':primary,
+                color:'white', border:'none', borderRadius:'10px',
+                fontSize:'15px', fontWeight:'600',
+                cursor:(saving||scanning||uploading)?'not-allowed':'pointer',
+                marginBottom:'8px',
+                boxShadow:(saving||scanning||uploading)?'none':'0 4px 14px rgba(15,110,86,0.3)'
+              }}
             >
               {saving?'Saving...':scanning?'Reading card...':uploading?'Uploading...':`Save ${isSeller?'Seller':'Buyer'} Contact`}
             </button>
